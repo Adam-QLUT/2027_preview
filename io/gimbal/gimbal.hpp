@@ -76,6 +76,9 @@ public:
   std::string str(GimbalMode mode) const;
   Eigen::Quaterniond q(std::chrono::steady_clock::time_point t);
 
+  // 当前 IMU 四元数队列的积压长度（线程安全），用于调试通信/对齐延迟
+  size_t queue_size() const;
+
   void send(
     bool control, bool fire, float yaw, float yaw_vel, float yaw_acc, float pitch, float pitch_vel,
     float pitch_acc);

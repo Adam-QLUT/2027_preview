@@ -76,6 +76,9 @@ int main(int argc, char * argv[])
       data["gimbal_pitch"] = gs.pitch;
       data["gimbal_pitch_vel"] = gs.pitch_vel;
 
+      // IMU 四元数队列积压长度：常驻偏大说明消费跟不上，图像-四元数对齐会取到陈旧数据
+      data["imu_queue"] = gimbal.queue_size();
+
       data["target_yaw"] = plan.target_yaw;
       data["target_pitch"] = plan.target_pitch;
 
