@@ -24,14 +24,14 @@ Planner::Planner(const std::string & config_path)
     yaml["outpost_delay_time"].IsDefined() ? yaml["outpost_delay_time"].as<double>() : 0.3;
   tools::logger()->info("[Planner] Config loaded from: {}",
     std::filesystem::absolute(config_path).string());
-  setup_yaw_solver(config_path);    // 改签名，顺便把 3 次解析降到 1 次
+  setup_yaw_solver(config_path);    
   setup_pitch_solver(config_path);
 }
 
 Plan Planner::plan(Target target, double bullet_speed)
 {
   // 0. Check bullet speed
-  if (bullet_speed < 10 || bullet_speed > 25) {
+  if (bullet_speed < 20 || bullet_speed > 25) {
     bullet_speed = 22;
   }
 

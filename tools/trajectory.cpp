@@ -11,7 +11,7 @@ Trajectory::Trajectory(
   const double k = k_small;
   points.reserve(static_cast<size_t>(R_K_iter) * static_cast<size_t>(max_iter));
 
-  unsolvable = false;//只要在相机可识别范围内理论全部有解
+  unsolvable = false;//一般情况下相机可识别范围内理论全部有解
   const double x_offset = 0.0;//暂未使用，假设轨迹理想
   const double y_offset = 0.0;
   const double z_offset = 0.0;
