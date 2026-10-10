@@ -62,15 +62,15 @@ void Solver::solve(Armor & armor) const
     object_points, armor.points, camera_matrix_, distort_coeffs_, rvec, tvec, false,
   cv::SOLVEPNP_IPPE);  // cv::SOLVEPNP_ITERATIVE感觉效果也不错  cv::SOLVEPNP_IPPE 
 
-  Eigen::Vector3d xyz_in_camera;
-  cv::cv2eigen(tvec, xyz_in_camera);
-  armor.xyz_in_gimbal = R_camera2gimbal_ * xyz_in_camera + t_camera2gimbal_;
+  cv::cv2eigen(tvec, armor.xyz_in_camera);
+  armor.xyz_in_gimbal = R_camera2gimbal_ * armor.xyz_in_camera + t_camera2gimbal_;
   armor.xyz_in_world = R_gimbal2world_ * armor.xyz_in_gimbal;
 
   cv::Mat rmat;
   cv::Rodrigues(rvec, rmat);
   Eigen::Matrix3d R_armor2camera;
   cv::cv2eigen(rmat, R_armor2camera);
+  armor.ypr_in_camera = tools::eulers(R_armor2camera, 2, 1, 0);
   Eigen::Matrix3d R_armor2gimbal = R_camera2gimbal_ * R_armor2camera;
   Eigen::Matrix3d R_armor2world = R_gimbal2world_ * R_armor2gimbal;
   armor.ypr_in_gimbal = tools::eulers(R_armor2gimbal, 2, 1, 0);

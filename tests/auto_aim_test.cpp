@@ -139,15 +139,21 @@ int main(int argc, char * argv[])
       data["armor_yaw_raw"] = armor.yaw_raw * 57.3;
       data["armor_center_x"] = armor.center_norm.x;
       data["armor_center_y"] = armor.center_norm.y;
+      data["pnp_x"] = armor.xyz_in_camera[0];
+      data["pnp_y"] = armor.xyz_in_camera[1];
+      data["pnp_z"] = armor.xyz_in_camera[2];
+      data["pnp_yaw"] = armor.ypr_in_camera[0];
+      data["pnp_pitch"] = armor.ypr_in_camera[1];
+      data["pnp_roll"] = armor.ypr_in_camera[2];
     }
 
     auto yaw = tools::eulers(q, 2, 1, 0)[0];
-    data["gimbal_yaw"] = yaw * 57.3;
+    //data["gimbal_yaw"] = yaw * 57.3;
     // 解算出的下发给下位机的 yaw/pitch（度）
-    data["cmd_yaw"] = command.yaw * 57.3;
-    data["cmd_pitch"] = command.pitch * 57.3;
-    data["cmd_control"] = command.control;
-    data["shoot"] = command.shoot;
+    //data["cmd_yaw"] = command.yaw * 57.3;
+    //data["cmd_pitch"] = command.pitch * 57.3;
+    //data["cmd_control"] = command.control;
+    //data["shoot"] = command.shoot;
 
     // MPC 流水线的对应量。plan_* / target_* 保持弧度，键名与单位都和
     // src/auto_aim_debug_mpc.cpp 一致，方便把两条流水线的曲线叠在一起看
@@ -218,16 +224,6 @@ int main(int argc, char * argv[])
       data["h"] = x[10];
       data["last_id"] = target.last_id;
 
-      // 卡方检验数据
-      data["residual_yaw"] = target.ekf().data.at("residual_yaw");
-      data["residual_pitch"] = target.ekf().data.at("residual_pitch");
-      data["residual_distance"] = target.ekf().data.at("residual_distance");
-      data["residual_angle"] = target.ekf().data.at("residual_angle");
-      data["nis"] = target.ekf().data.at("nis");
-      data["nees"] = target.ekf().data.at("nees");
-      data["nis_fail"] = target.ekf().data.at("nis_fail");
-      data["nees_fail"] = target.ekf().data.at("nees_fail");
-      data["recent_nis_failures"] = target.ekf().data.at("recent_nis_failures");
     }
 
     plotter.plot(data);
