@@ -28,7 +28,8 @@ public:
   Target() = default;
   Target(
     const Armor & armor, std::chrono::steady_clock::time_point t, double radius, int armor_num,
-    Eigen::VectorXd P0_dig, double v1 = 100, double v2 = 400, double q_pitch = 1e-4);
+    Eigen::VectorXd P0_dig, double v1 = 100, double v2 = 400, double q_pitch = 1e-4,
+    double q_roll = 1e-4);
   Target(double x, double vyaw, double radius, double h);
 
   void predict(std::chrono::steady_clock::time_point t);
@@ -61,6 +62,7 @@ private:
   double v1_;  // 加速度方差
   double v2_;  // 角加速度方差
   double q_pitch_ = 1e-4;
+  double q_roll_ = 1e-4;
 
   tools::ExtendedKalmanFilter ekf_;
   std::chrono::steady_clock::time_point t_;

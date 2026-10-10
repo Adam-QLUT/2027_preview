@@ -23,7 +23,7 @@ constexpr double OUTPOST_HEIGHT_MAX = 0.21;              // m
 
 Target::Target(
   const Armor & armor, std::chrono::steady_clock::time_point t, double radius, int armor_num,
-  Eigen::VectorXd P0_dig, double v1, double v2, double q_pitch)
+  Eigen::VectorXd P0_dig, double v1, double v2, double q_pitch, double q_roll)
 : name(armor.name),
   armor_type(armor.type),
   jumped(false),
@@ -33,6 +33,7 @@ Target::Target(
   v1_(v1),
   v2_(v2),
   q_pitch_(q_pitch),
+  q_roll_(q_roll),
   t_(t),
   is_switch_(false),
   is_converged_(false),
@@ -45,26 +46,38 @@ Target::Target(
   const Eigen::VectorXd & xyz = armor.xyz_in_world;
   const Eigen::VectorXd & ypr = armor.ypr_in_world;
 
-  const bool fixed_pitch = name == ArmorName::outpost || name == ArmorName::base;
-  const double car_pitch = fixed_pitch ? 0.0 : ypr[1] - motion_model::armor_pitch(name);
+  const bool fixed_tilt = name == ArmorName::outpost || name == ArmorName::base;
+  // Remove the mounting rotation before extracting the car's Euler angles.
+  const Eigen::Matrix3d car_rotation = tools::rotation_matrix(ypr) *
+    motion_model::rotation(0.0, -motion_model::armor_pitch(name));
+  const Eigen::Vector3d car_ypr = tools::eulers(car_rotation, 2, 1, 0);
+  const double car_yaw = fixed_tilt ? ypr[0] : car_ypr[0];
+  const double car_pitch = fixed_tilt ? 0.0 : car_ypr[1];
+  const double car_roll = fixed_tilt ? 0.0 : car_ypr[2];
   const Eigen::Vector3d center = xyz +
-    motion_model::rotation(ypr[0], car_pitch) * Eigen::Vector3d(r, 0, 0);
+    motion_model::rotation(car_yaw, car_pitch, car_roll) * Eigen::Vector3d(r, 0, 0);
   const double center_z = center.z();
 
-  // x vx y vy z vz a w r l h car_pitch; car roll is fixed at zero.
+  // x vx y vy z vz a w r l h car_pitch car_roll
   // a: angle
   // w: angular velocity
   // l: r2 - r1; for the outpost, z1 - z0
   // h: z2 - z1; for the outpost, z2 - z0
-  Eigen::VectorXd x0{{center.x(), 0, center.y(), 0, center_z, 0, ypr[0], 0, r, 0, 0, car_pitch}};
-  if (P0_dig.size() == motion_model::STATE_DIM - 1) {
+  Eigen::VectorXd x0{{center.x(), 0, center.y(), 0, center_z, 0, car_yaw, 0, r, 0, 0,
+                      car_pitch, car_roll}};
+  if (P0_dig.size() == 11 || P0_dig.size() == 12) {
+    const auto old_size = P0_dig.size();
     P0_dig.conservativeResize(motion_model::STATE_DIM);
-    P0_dig[motion_model::CAR_PITCH] = 0.1;
+    if (old_size == 11) P0_dig[motion_model::CAR_PITCH] = 0.1;
+    P0_dig[motion_model::CAR_ROLL] = tools::square(3.0 * CV_PI / 180.0);
   }
   if (P0_dig.size() != motion_model::STATE_DIM) {
-    throw std::invalid_argument("Target covariance must have 12 entries");
+    throw std::invalid_argument("Target covariance must have 11, 12 or 13 entries");
   }
-  if (fixed_pitch) P0_dig[motion_model::CAR_PITCH] = 0.0;
+  if (fixed_tilt) {
+    P0_dig[motion_model::CAR_PITCH] = 0.0;
+    P0_dig[motion_model::CAR_ROLL] = 0.0;
+  }
   Eigen::MatrixXd P0 = P0_dig.asDiagonal();
 
   if (name == ArmorName::outpost && armor_num_ == 3) {
@@ -88,7 +101,7 @@ Target::Target(double x, double vyaw, double radius, double h)
   jumped(false), last_id(0), armor_num_(4), switch_count_(0), update_count_(0),
   is_switch_(false), is_converged_(false), outpost_rotation_direction_(0), v1_(100), v2_(400)
 {
-  Eigen::VectorXd x0{{x, 0, 0, 0, 0, 0, 0, vyaw, radius, 0, h, 0}};
+  Eigen::VectorXd x0{{x, 0, 0, 0, 0, 0, 0, vyaw, radius, 0, h, 0, 0}};
   Eigen::VectorXd P0_dig = Eigen::VectorXd::Zero(motion_model::STATE_DIM);
   Eigen::MatrixXd P0 = P0_dig.asDiagonal();
 
@@ -134,6 +147,7 @@ void Target::predict(double dt)
   }
   if (name != ArmorName::outpost && name != ArmorName::base) {
     Q(motion_model::CAR_PITCH, motion_model::CAR_PITCH) = std::abs(dt) * q_pitch_;
+    Q(motion_model::CAR_ROLL, motion_model::CAR_ROLL) = std::abs(dt) * q_roll_;
   }
 
   // 防止夹角求和出现异常值
@@ -317,6 +331,7 @@ bool Target::diverged() const
 {
   if (!ekf_.x.allFinite() || !ekf_.P.allFinite()) return true;
   if (std::abs(ekf_.x[motion_model::CAR_PITCH]) > CV_PI / 4.0) return true;
+  if (std::abs(ekf_.x[motion_model::CAR_ROLL]) > CV_PI / 4.0) return true;
   auto r_ok = ekf_.x[8] > 0.05 && ekf_.x[8] < 0.5;
   if (name == ArmorName::outpost) return !r_ok;
 

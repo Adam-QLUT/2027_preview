@@ -9,8 +9,9 @@
 
 namespace auto_aim::motion_model
 {
-constexpr int STATE_DIM = 12;
+constexpr int STATE_DIM = 13;
 constexpr int CAR_PITCH = 11;
+constexpr int CAR_ROLL = 12;
 constexpr int UV_DIM = 8;
 constexpr double ARMOR_PITCH = 15.0 * CV_PI / 180.0;
 
@@ -20,13 +21,16 @@ inline double armor_pitch(ArmorName name)
 }
 
 template <typename T>
-Eigen::Matrix<T, 3, 3> rotation(const T & yaw, const T & pitch)
+Eigen::Matrix<T, 3, 3> rotation(const T & yaw, const T & pitch, const T & roll = T(0))
 {
   using std::cos;
   using std::sin;
   const T cy = cos(yaw), sy = sin(yaw), cp = cos(pitch), sp = sin(pitch);
+  const T cr = cos(roll), sr = sin(roll);
   Eigen::Matrix<T, 3, 3> result;
-  result << cy * cp, -sy, cy * sp, sy * cp, cy, sy * sp, -sp, T(0), cp;
+  result << cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr,
+    sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
+    -sp, cp * sr, cp * cr;
   return result;
 }
 
@@ -44,9 +48,10 @@ Eigen::Transform<T, 3, Eigen::Isometry> armor_pose(const T * x, int id, int armo
     if (id == 1) height = x[9];
     if (id == 2) height = x[10];
   }
-  // Roll is absent. Pitch tilts both the armor orbit and its orientation.
-  const T pitch = name == ArmorName::outpost || name == ArmorName::base ? T(0) : x[CAR_PITCH];
-  const Eigen::Matrix<T, 3, 3> car_rotation = rotation(x[6], pitch);
+  const bool fixed_tilt = name == ArmorName::outpost || name == ArmorName::base;
+  const T pitch = fixed_tilt ? T(0) : x[CAR_PITCH];
+  const T roll = fixed_tilt ? T(0) : x[CAR_ROLL];
+  const Eigen::Matrix<T, 3, 3> car_rotation = rotation(x[6], pitch, roll);
   auto pose = Eigen::Transform<T, 3, Eigen::Isometry>::Identity();
   pose.translation() =
     Eigen::Matrix<T, 3, 1>(x[0], x[2], x[4]) +

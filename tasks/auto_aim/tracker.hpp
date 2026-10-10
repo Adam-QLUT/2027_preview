@@ -40,6 +40,7 @@ private:
   int normal_temp_lost_count_;
   double v1_, v2_;  // 从yaml读取的方差参数
   double q_pitch_;
+  double q_roll_;
   std::string state_, pre_state_;
   Target target_;
   std::chrono::steady_clock::time_point last_timestamp_;

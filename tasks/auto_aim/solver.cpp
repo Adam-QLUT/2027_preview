@@ -40,13 +40,15 @@ struct PixelResidual
   motion_model::Camera camera;
   ArmorType type;
   std::vector<cv::Point2f> pixels;
+  double mounting_pitch;
 
   template <typename T>
   bool operator()(const T * parameters, T * residuals) const
   {
     auto pose = Eigen::Transform<T, 3, Eigen::Isometry>::Identity();
     pose.translation() << parameters[0], parameters[1], parameters[2];
-    pose.linear() = motion_model::rotation(parameters[3], parameters[4]);
+    pose.linear() = motion_model::rotation(parameters[3], parameters[4], parameters[5]) *
+      motion_model::rotation(T(0), T(mounting_pitch));
     std::array<Eigen::Matrix<T, 2, 1>, 4> projected;
     if (!camera.project(pose, type, projected)) return false;
     for (int i = 0; i < 4; ++i) {
@@ -341,22 +343,27 @@ double Solver::oupost_reprojection_error(Armor armor, const double & pitch)
 
 void Solver::optimize_pose(Armor & armor) const
 {
-  const bool fixed_pitch = armor.name == ArmorName::outpost || armor.name == ArmorName::base;
-  const double pitch = fixed_pitch ? motion_model::armor_pitch(armor.name) : armor.ypr_in_world[1];
-  double parameters[5] = {armor.xyz_in_world.x(), armor.xyz_in_world.y(), armor.xyz_in_world.z(),
-                          armor.ypr_in_world[0], pitch};
+  const bool fixed_tilt = armor.name == ArmorName::outpost || armor.name == ArmorName::base;
+  const double mounting_pitch = motion_model::armor_pitch(armor.name);
+  const Eigen::Matrix3d car_rotation = tools::rotation_matrix(armor.ypr_in_world) *
+    motion_model::rotation(0.0, -mounting_pitch);
+  const Eigen::Vector3d car_ypr = tools::eulers(car_rotation, 2, 1, 0);
+  double parameters[6] = {armor.xyz_in_world.x(), armor.xyz_in_world.y(), armor.xyz_in_world.z(),
+                          fixed_tilt ? armor.ypr_in_world[0] : car_ypr[0],
+                          fixed_tilt ? 0.0 : car_ypr[1], fixed_tilt ? 0.0 : car_ypr[2]};
   ceres::Problem problem;
   problem.AddResidualBlock(
-    new ceres::AutoDiffCostFunction<PixelResidual, 8, 5>(
-      new PixelResidual{camera(), armor.type, armor.points}),
+    new ceres::AutoDiffCostFunction<PixelResidual, 8, 6>(
+      new PixelResidual{camera(), armor.type, armor.points, mounting_pitch}),
     nullptr, parameters);
-  if (fixed_pitch) {
-    problem.SetManifold(parameters, new ceres::SubsetManifold(5, {4}));
+  if (fixed_tilt) {
+    problem.SetManifold(parameters, new ceres::SubsetManifold(6, {4, 5}));
   } else {
-    problem.SetParameterLowerBound(parameters, 4, motion_model::ARMOR_PITCH - CV_PI / 4.0);
-    problem.SetParameterUpperBound(parameters, 4, motion_model::ARMOR_PITCH + CV_PI / 4.0);
-    parameters[4] = std::clamp(parameters[4], motion_model::ARMOR_PITCH - CV_PI / 4.0,
-                               motion_model::ARMOR_PITCH + CV_PI / 4.0);
+    for (int index : {4, 5}) {
+      problem.SetParameterLowerBound(parameters, index, -CV_PI / 4.0);
+      problem.SetParameterUpperBound(parameters, index, CV_PI / 4.0);
+      parameters[index] = std::clamp(parameters[index], -CV_PI / 4.0, CV_PI / 4.0);
+    }
   }
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::DENSE_QR;
@@ -369,7 +376,9 @@ void Solver::optimize_pose(Armor & armor) const
   armor.xyz_in_world << parameters[0], parameters[1], parameters[2];
   armor.xyz_in_gimbal = R_gimbal2world_.transpose() * armor.xyz_in_world;
   armor.ypd_in_world = tools::xyz2ypd(armor.xyz_in_world);
-  const Eigen::Matrix3d R_armor2world = motion_model::rotation(parameters[3], parameters[4]);
+  const Eigen::Matrix3d R_armor2world =
+    motion_model::rotation(parameters[3], parameters[4], parameters[5]) *
+    motion_model::rotation(0.0, mounting_pitch);
   armor.ypr_in_world = tools::eulers(R_armor2world, 2, 1, 0);
   armor.ypr_in_gimbal = tools::eulers(R_gimbal2world_.transpose() * R_armor2world, 2, 1, 0);
 }

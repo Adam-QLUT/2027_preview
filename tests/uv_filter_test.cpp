@@ -21,7 +21,7 @@ void require(bool condition, const std::string & message)
   if (!condition) throw std::runtime_error(message);
 }
 
-Eigen::VectorXd state(double yaw = 0.3, double pitch = 0.12)
+Eigen::VectorXd state(double yaw = 0.3, double pitch = 0.12, double roll = 0.05)
 {
   Eigen::VectorXd x = Eigen::VectorXd::Zero(STATE_DIM);
   x[0] = 4.0;
@@ -32,6 +32,7 @@ Eigen::VectorXd state(double yaw = 0.3, double pitch = 0.12)
   x[9] = 0.04;
   x[10] = 0.06;
   x[CAR_PITCH] = pitch;
+  x[CAR_ROLL] = roll;
   return x;
 }
 
@@ -53,9 +54,9 @@ void geometry_test()
 {
   const auto x = state();
   const Eigen::Matrix3d car = (Eigen::AngleAxisd(x[6], Eigen::Vector3d::UnitZ()) *
-                               Eigen::AngleAxisd(x[CAR_PITCH], Eigen::Vector3d::UnitY()))
+                               Eigen::AngleAxisd(x[CAR_PITCH], Eigen::Vector3d::UnitY()) *
+                               Eigen::AngleAxisd(x[CAR_ROLL], Eigen::Vector3d::UnitX()))
                                 .toRotationMatrix();
-  require(std::abs(tools::eulers(car, 2, 1, 0)[2]) < 1e-12, "Car roll must be zero");
   for (int id = 0; id < 4; ++id) {
     const double phase = id * CV_PI / 2.0;
     const double radius = (id & 1) ? x[8] + x[9] : x[8];
@@ -63,7 +64,7 @@ void geometry_test()
                                  (id & 1) ? x[10] : 0);
     const auto pose = armor_pose(x.data(), id, 4, ArmorName::three);
     const Eigen::Vector3d expected = Eigen::Vector3d(x[0], x[2], x[4]) + car * offset;
-    require((pose.translation() - expected).norm() < 1e-12, "Pitch must tilt armor orbit");
+    require((pose.translation() - expected).norm() < 1e-12, "Car tilt must rotate armor orbit");
     const Eigen::Matrix3d relative = car.transpose() * pose.linear();
     const Eigen::Vector3d ypr = tools::eulers(relative, 2, 1, 0);
     require(std::abs(ypr[1] - ARMOR_PITCH) < 1e-12, "Relative armor pitch must be 15 degrees");
@@ -97,6 +98,9 @@ void projection_test(Solver & solver)
         }
         if (name != ArmorName::three) {
           require(H.col(CAR_PITCH).isZero(), "Outpost/base pitch must remain fixed");
+          require(H.col(CAR_ROLL).isZero(), "Outpost/base roll must remain fixed");
+        } else {
+          require(H.col(CAR_ROLL).norm() > 1e-3, "UV observations must respond to car roll");
         }
       }
     }
@@ -126,31 +130,32 @@ void least_squares_test(Solver & solver)
     for (double distance : {3.0, 8.0}) {
       for (double yaw : {-0.7, 0.0, 0.7}) {
         for (double pitch : {-0.15, 0.15}) {
-          auto pose = Eigen::Isometry3d::Identity();
-          pose.translation() << distance, 0.2, 0.4;
-          pose.linear() = rotation(yaw, ARMOR_PITCH + pitch);
-          const auto armor = observation(solver, pose, type, ArmorName::three);
-          require((armor.xyz_in_world - pose.translation()).norm() < 0.002,
-                  "Least-squares position differs from exact pose");
-          require(
-            (rotation(armor.ypr_in_world[0], armor.ypr_in_world[1]) - pose.linear()).norm() < 0.002,
-            "Least-squares orientation differs from exact pose");
-          require(std::abs(armor.ypr_in_world[2]) < 1e-10, "Initial car roll must be zero");
+          for (double roll : {-0.06, 0.0, 0.06}) {
+            auto pose = Eigen::Isometry3d::Identity();
+            pose.translation() << distance, 0.2, 0.4;
+            pose.linear() = rotation(yaw, pitch, roll) * rotation(0.0, ARMOR_PITCH);
+            const auto armor = observation(solver, pose, type, ArmorName::three);
+            require((armor.xyz_in_world - pose.translation()).norm() < 0.002,
+                    "Least-squares position differs from exact pose");
+            require(
+              (tools::rotation_matrix(armor.ypr_in_world) - pose.linear()).norm() < 0.002,
+              "Least-squares orientation differs from exact pose");
+          }
         }
       }
     }
   }
   auto pose = Eigen::Isometry3d::Identity();
   pose.translation() << 4, 0.2, 0.3;
-  pose.linear() = rotation(0.5, ARMOR_PITCH + 0.1);
+  pose.linear() = rotation(0.5, 0.1, 0.05) * rotation(0.0, ARMOR_PITCH);
   auto armor = observation(solver, pose, ArmorType::small, ArmorName::three);
   armor.points[0].x += 0.8f;
   armor.points[1].y -= 0.5f;
   armor.points[2].x -= 0.4f;
-  solver.solve(armor);
+  require(solver.solve(armor), "Noisy tilted armor must have a valid IPPE solution");
   auto refined_pose = Eigen::Isometry3d::Identity();
   refined_pose.translation() = armor.xyz_in_world;
-  refined_pose.linear() = rotation(armor.ypr_in_world[0], armor.ypr_in_world[1]);
+  refined_pose.linear() = tools::rotation_matrix(armor.ypr_in_world);
   const auto refined = solver.reproject_armor(refined_pose, armor.type);
   const auto baseline = solver.reproject_armor(pose, armor.type);
   double refined_cost = 0, baseline_cost = 0;
@@ -195,7 +200,11 @@ void filter_test(Solver & solver)
   auto armor = observation(solver, armor_pose(truth.data(), 0, 4, ArmorName::three),
                            ArmorType::small, ArmorName::three);
   armor.xyz_in_world += Eigen::Vector3d(0.03, -0.02, 0.02);
+  // Start with an incorrect roll so UV updates must recover it from pixels.
+  armor.ypr_in_world = tools::eulers(rotation(truth[6], truth[CAR_PITCH]) *
+                                      rotation(0.0, ARMOR_PITCH), 2, 1, 0);
   Eigen::VectorXd covariance = Eigen::VectorXd::Constant(STATE_DIM, 0.1);
+  covariance[CAR_ROLL] = tools::square(3.0 * CV_PI / 180.0);
   const auto start = std::chrono::steady_clock::now();
   Target target(armor, start, 0.2, 4, covariance, 5, 350);
   const auto before = (target.armor_pose(0).translation() -
@@ -205,6 +214,7 @@ void filter_test(Solver & solver)
   std::normal_distribution<double> noise(0, 0.05);
   for (int frame = 0; frame < 400; ++frame) {
     truth[6] = tools::limit_rad(frame * 0.01);
+    truth[CAR_ROLL] = 0.05 + 0.02 * std::sin(frame * 0.01);
     target.predict(0.01);
     const int id = static_cast<int>(std::round(-truth[6] / (CV_PI / 2.0)) + 4) % 4;
     auto measured = observation(solver, armor_pose(truth.data(), id, 4, ArmorName::three),
@@ -228,12 +238,56 @@ void filter_test(Solver & solver)
       require(after < before, "UV updates must improve armor position");
     }
   }
+  std::cout << "Rotating vehicle pitch error: " << target.ekf_x()[CAR_PITCH] - truth[CAR_PITCH]
+            << " rad; roll error: " << target.ekf_x()[CAR_ROLL] - truth[CAR_ROLL]
+            << " rad; NIS=" << target.ekf().data.at("nis") << '\n';
   require(std::abs(target.ekf_x()[CAR_PITCH] - truth[CAR_PITCH]) < 0.015,
           "Vehicle pitch must remain observable during rotation");
+  require(std::abs(target.ekf_x()[CAR_ROLL] - truth[CAR_ROLL]) < 0.015,
+          "Vehicle roll must follow small changes from UV observations");
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigenvalues(target.ekf().P);
   require(eigenvalues.eigenvalues().minCoeff() > -1e-10, "Covariance must remain PSD");
-  std::cout << "Rotating vehicle pitch error: " << target.ekf_x()[CAR_PITCH] - truth[CAR_PITCH]
-            << " rad; NIS=" << target.ekf().data.at("nis") << '\n';
+}
+
+void initialization_test(Solver & solver)
+{
+  const auto truth = state(0.7, 0.12, -0.06);
+  const auto armor = observation(solver, armor_pose(truth.data(), 0, 4, ArmorName::three),
+                                 ArmorType::small, ArmorName::three);
+  const auto start = std::chrono::steady_clock::now();
+  for (int covariance_size : {11, 12, 13}) {
+    Eigen::VectorXd covariance = Eigen::VectorXd::Constant(covariance_size, 0.1);
+    Target target(armor, start, truth[8], 4, covariance, 5, 350, 1e-4, 1e-5);
+    const auto initialized = target.ekf_x();
+    require(initialized.size() == STATE_DIM, "Legacy covariance must expand to 13D");
+    require(std::abs(initialized[CAR_PITCH] - truth[CAR_PITCH]) < 0.002 &&
+              std::abs(initialized[CAR_ROLL] - truth[CAR_ROLL]) < 0.002 &&
+              std::abs(tools::limit_rad(initialized[6] - truth[6])) < 0.002,
+            "Initialization must remove mounting rotation before extracting Euler angles");
+    require((target.armor_pose(0).translation() - armor.xyz_in_world).norm() < 1e-12,
+            "Tilted initialization must preserve the observed armor position");
+    const double variance = target.ekf().P(CAR_ROLL, CAR_ROLL);
+    const double initial_roll = initialized[CAR_ROLL];
+    target.predict(0.02);
+    require(target.ekf_x()[CAR_ROLL] == initial_roll,
+            "Prediction must keep roll constant without a roll velocity state");
+    require(std::abs(target.ekf().P(CAR_ROLL, CAR_ROLL) - variance - 0.02 * 1e-5) < 1e-12,
+            "Roll covariance must grow by dt times the configured process noise");
+    if (covariance_size < STATE_DIM) {
+      require(std::abs(variance - tools::square(3.0 * CV_PI / 180.0)) < 1e-12,
+              "Legacy covariance must use a three-degree initial roll uncertainty");
+    }
+  }
+  for (ArmorName name : {ArmorName::outpost, ArmorName::base}) {
+    auto fixed_armor = armor;
+    fixed_armor.name = name;
+    Eigen::VectorXd covariance = Eigen::VectorXd::Constant(STATE_DIM, 0.1);
+    Target target(fixed_armor, start, truth[8], 3, covariance);
+    target.predict(0.02);
+    require(target.ekf_x()[CAR_PITCH] == 0 && target.ekf_x()[CAR_ROLL] == 0 &&
+              target.ekf().P.row(CAR_PITCH).isZero() && target.ekf().P.row(CAR_ROLL).isZero(),
+            "Outpost/base tilt and its covariance must stay zero");
+  }
 }
 
 void outpost_test(Solver & solver)
@@ -257,6 +311,7 @@ void outpost_test(Solver & solver)
     require(target.last_id == id, "Outpost selected wrong armor/height");
     require(target.ekf_x()[8] == 0.2765, "Outpost radius must stay fixed");
     require(target.ekf_x()[CAR_PITCH] == 0, "Outpost car pitch must stay fixed");
+    require(target.ekf_x()[CAR_ROLL] == 0, "Outpost car roll must stay fixed");
     require(std::isfinite(target.ekf().data.at("nees")), "Fixed-state NEES must remain finite");
     require(!target.diverged(), "Outpost filter diverged");
   }
@@ -277,7 +332,9 @@ void tracker_test(const std::string & config)
     t += std::chrono::milliseconds(10);
     const auto targets = tracker.track(armors, t);
     require(!targets.empty(), "Tracker must retain a target with valid UV observations");
-    require(targets.front().ekf_x().size() == STATE_DIM, "Tracker must construct 12D state");
+    require(targets.front().ekf_x().size() == STATE_DIM, "Tracker must construct 13D state");
+    require(std::abs(targets.front().ekf_x()[CAR_ROLL] - truth[CAR_ROLL]) < 0.01,
+            "Tracker must retain small vehicle roll");
   }
   require(tracker.state() == "tracking", "Tracker must reach tracking state");
   Target simulated(3, 5, 0.2, 0.1);
@@ -296,6 +353,7 @@ int main(int argc, char ** argv)
     projection_test(solver);
     least_squares_test(solver);
     ippe_candidate_test(solver);
+    initialization_test(solver);
     filter_test(solver);
     outpost_test(solver);
     const Eigen::Quaterniond q(Eigen::AngleAxisd(0.15, Eigen::Vector3d::UnitZ()) *
