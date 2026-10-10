@@ -200,13 +200,13 @@ int main(int argc, char * argv[])
         solver.reproject_armor(aim_xyza.head(3), aim_xyza[3], target.armor_type, target.name);
       if (aim_point.valid) tools::draw_points(img, image_points, {0, 0, 255});
 
-      // planner规划瞄准位置（黄）。debug_xyza 是裸 Eigen 向量、没有 valid 标志，
-      // 用 plan.control 当守卫，并挡掉未初始化时的非有限值
-      if (plan.control && planner.debug_xyza.allFinite()) {
-        Eigen::Vector4d plan_xyza = planner.debug_xyza;
-        auto plan_image_points =
-          solver.reproject_armor(plan_xyza.head(3), plan_xyza[3], target.armor_type, target.name);
-        tools::draw_points(img, plan_image_points, {0, 255, 255});
+      // planner规划瞄准位置（黄），使用包含整车 pitch/roll 的完整装甲板位姿。
+      if (plan.control) {
+        const auto plan_pose = planner.debug_armor_pose();
+        if (plan_pose.has_value() && plan_pose->matrix().allFinite()) {
+          auto plan_image_points = solver.reproject_armor(*plan_pose, target.armor_type);
+          tools::draw_points(img, plan_image_points, {0, 255, 255});
+        }
       }
 
       // 观测器内部数据

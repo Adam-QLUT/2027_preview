@@ -30,6 +30,8 @@ Planner::Planner(const std::string & config_path)
 
 Plan Planner::plan(Target target, double bullet_speed)
 {
+  set_debug_armor_pose(std::nullopt);
+
   // 0. Check bullet speed
   if (bullet_speed < 20 || bullet_speed > 25) {
     bullet_speed = 22;
@@ -55,6 +57,7 @@ Plan Planner::plan(Target target, double bullet_speed)
     yaw0 = aim(target, bullet_speed)(0);
     traj = get_trajectory(target, yaw0, bullet_speed);
   } catch (const std::exception & e) {
+    set_debug_armor_pose(std::nullopt);
     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
     return {false};
   }
@@ -99,7 +102,10 @@ Plan Planner::plan(Target target, double bullet_speed)
 
 Plan Planner::plan(std::optional<Target> target, double bullet_speed)
 {
-  if (!target.has_value()) return {false};
+  if (!target.has_value()) {
+    set_debug_armor_pose(std::nullopt);
+    return {false};
+  }
 
   double delay_time;
   if (target->name == ArmorName::outpost) {
@@ -166,24 +172,39 @@ void Planner::setup_pitch_solver(const std::string & config_path)
 Eigen::Matrix<double, 2, 1> Planner::aim(const Target & target, double bullet_speed)
 {
   Eigen::Vector3d xyz;
-  double yaw;
   auto min_dist = 1e10;
+  std::optional<Eigen::Isometry3d> selected_pose;
 
-  for (auto & xyza : target.armor_xyza_list()) {
+  const auto armor_xyza_list = target.armor_xyza_list();
+  for (std::size_t id = 0; id < armor_xyza_list.size(); ++id) {
+    const auto & xyza = armor_xyza_list[id];
     auto dist = xyza.head<2>().norm();
     if (dist < min_dist) {
       min_dist = dist;
       xyz = xyza.head<3>();
-      yaw = xyza[3];
+      selected_pose = target.armor_pose(static_cast<int>(id));
     }
   }
-  debug_xyza = Eigen::Vector4d(xyz.x(), xyz.y(), xyz.z(), yaw);
+  if (!selected_pose.has_value()) throw std::runtime_error("Target has no armor pose");
+  set_debug_armor_pose(selected_pose);
 
   auto azim = std::atan2(xyz.y(), xyz.x());
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
   if (bullet_traj.unsolvable) throw std::runtime_error("Unsolvable bullet trajectory!");
 
   return {tools::limit_rad(azim + yaw_offset_), -bullet_traj.pitch - pitch_offset_};
+}
+
+std::optional<Eigen::Isometry3d> Planner::debug_armor_pose() const
+{
+  std::lock_guard<std::mutex> lock(debug_pose_mutex_);
+  return debug_armor_pose_;
+}
+
+void Planner::set_debug_armor_pose(std::optional<Eigen::Isometry3d> pose)
+{
+  std::lock_guard<std::mutex> lock(debug_pose_mutex_);
+  debug_armor_pose_ = std::move(pose);
 }
 
 Trajectory Planner::get_trajectory(Target & target, double yaw0, double bullet_speed)

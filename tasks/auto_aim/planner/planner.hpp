@@ -4,7 +4,9 @@
 #include <yaml-cpp/yaml.h>
 
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include <list>
+#include <mutex>
 #include <optional>
 
 #include "tasks/auto_aim/target.hpp"
@@ -35,11 +37,11 @@ struct Plan
 class Planner
 {
 public:
-  Eigen::Vector4d debug_xyza;
   Planner(const std::string & config_path);
 
   Plan plan(Target target, double bullet_speed);
   Plan plan(std::optional<Target> target, double bullet_speed);
+  std::optional<Eigen::Isometry3d> debug_armor_pose() const;
 
 private:
   double yaw_offset_;
@@ -51,11 +53,15 @@ private:
   TinySolver * yaw_solver_;
   TinySolver * pitch_solver_;
 
+  mutable std::mutex debug_pose_mutex_;
+  std::optional<Eigen::Isometry3d> debug_armor_pose_;
+
   void setup_yaw_solver(const std::string & config_path);
   void setup_pitch_solver(const std::string & config_path);
 
   Eigen::Matrix<double, 2, 1> aim(const Target & target, double bullet_speed);
   Trajectory get_trajectory(Target & target, double yaw0, double bullet_speed);
+  void set_debug_armor_pose(std::optional<Eigen::Isometry3d> pose);
 };
 
 }  // namespace auto_aim
