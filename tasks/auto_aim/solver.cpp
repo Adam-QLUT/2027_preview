@@ -4,6 +4,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -12,6 +13,11 @@
 
 namespace auto_aim
 {
+namespace
+{
+constexpr double MAX_ARMOR_YAW = 150.0 * CV_PI / 180.0;
+}
+
 constexpr double LIGHTBAR_LENGTH = 56e-3;     // m
 constexpr double BIG_ARMOR_WIDTH = 230e-3;    // m
 constexpr double SMALL_ARMOR_WIDTH = 135e-3;  // m
@@ -91,16 +97,47 @@ void Solver::set_R_gimbal2world(const Eigen::Quaterniond & q)
   R_gimbal2world_ = R_gimbal2imubody_.transpose() * R_imubody2imuabs * R_gimbal2imubody_;
 }
 
-//solvePnP（获得姿态）
-void Solver::solve(Armor & armor) const
+// solvePnP（获得姿态）
+bool Solver::solve(Armor & armor) const
 {
   const auto & object_points =
     (armor.type == ArmorType::big) ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
 
-  cv::Vec3d rvec, tvec;
-  cv::solvePnP(
-    object_points, armor.points, camera_matrix_, distort_coeffs_, rvec, tvec, false,
-  cv::SOLVEPNP_IPPE);  // cv::SOLVEPNP_ITERATIVE感觉效果也不错  cv::SOLVEPNP_IPPE 
+  std::vector<cv::Mat> rvecs, tvecs;
+  const int solution_count = cv::solvePnPGeneric(
+    object_points, armor.points, camera_matrix_, distort_coeffs_, rvecs, tvecs, false,
+    cv::SOLVEPNP_IPPE);
+  if (solution_count <= 0 || rvecs.size() != tvecs.size()) return false;
+
+  int best_index = -1;
+  double best_error = std::numeric_limits<double>::infinity();
+  for (std::size_t i = 0; i < rvecs.size(); ++i) {
+    cv::Mat rmat;
+    cv::Rodrigues(rvecs[i], rmat);
+    Eigen::Matrix3d R_armor2camera;
+    cv::cv2eigen(rmat, R_armor2camera);
+    const Eigen::Matrix3d R_armor2gimbal = R_camera2gimbal_ * R_armor2camera;
+    const double armor_yaw = tools::eulers(R_armor2gimbal, 2, 1, 0)[0];
+
+    // 装甲板必须朝向相机，反向的 IPPE 解通常对应自身 yaw 接近 180°。
+    if (std::abs(armor_yaw) > MAX_ARMOR_YAW || tvecs[i].at<double>(2) <= 0) continue;
+
+    std::vector<cv::Point2f> projected;
+    cv::projectPoints(
+      object_points, rvecs[i], tvecs[i], camera_matrix_, distort_coeffs_, projected);
+    double error = 0.0;
+    for (std::size_t point = 0; point < projected.size(); ++point) {
+      error += tools::square(cv::norm(projected[point] - armor.points[point]));
+    }
+    if (error < best_error) {
+      best_error = error;
+      best_index = static_cast<int>(i);
+    }
+  }
+  if (best_index < 0) return false;
+
+  const cv::Mat & rvec = rvecs[best_index];
+  const cv::Mat & tvec = tvecs[best_index];
 
   cv::cv2eigen(tvec, armor.xyz_in_camera);
   armor.xyz_in_gimbal = R_camera2gimbal_ * armor.xyz_in_camera + t_camera2gimbal_;
@@ -120,6 +157,7 @@ void Solver::solve(Armor & armor) const
 
   armor.yaw_raw = armor.ypr_in_world[0];
   optimize_pose(armor);
+  return true;
 }
 
 motion_model::Camera Solver::camera() const

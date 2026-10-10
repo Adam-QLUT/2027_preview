@@ -19,7 +19,8 @@ public:
 
   void set_R_gimbal2world(const Eigen::Quaterniond & q);
 
-  void solve(Armor & armor) const;
+  // 使用 IPPE 的全部候选解，返回是否找到朝向相机的合法解。
+  bool solve(Armor & armor) const;
 
   std::vector<cv::Point2f> reproject_armor(
     const Eigen::Vector3d & xyz_in_world, double yaw, ArmorType type, ArmorName name) const;

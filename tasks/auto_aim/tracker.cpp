@@ -2,6 +2,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <tuple>
 
 #include "tools/logger.hpp"
@@ -238,8 +239,11 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
 {
   if (armors.empty()) return false;
 
-  auto & armor = armors.front();
-  solver_.solve(armor);
+  auto armor_it = std::find_if(armors.begin(), armors.end(), [&](Armor & armor) {
+    return solver_.solve(armor);
+  });
+  if (armor_it == armors.end()) return false;
+  auto & armor = *armor_it;
 
   // 根据兵种优化初始化参数
   
@@ -276,6 +280,7 @@ bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock
 
   if (found_count == 0) return false;
 
+  int solved_count = 0;
   for (auto & armor : armors) {
     if (
       armor.name != target_.name || armor.type != target_.armor_type
@@ -283,12 +288,13 @@ bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock
     )
       continue;
 
-    solver_.solve(armor);
+    if (!solver_.solve(armor)) continue;
 
     target_.update(armor, solver_);
+    solved_count++;
   }
 
-  return true;
+  return solved_count > 0;
 }
 
 }  // namespace auto_aim

@@ -45,7 +45,7 @@ Armor observation(Solver & solver, const Eigen::Isometry3d & pose, ArmorType typ
   armor.name = name;
   armor.priority = ArmorPriority::first;
   armor.color = Color::blue;
-  solver.solve(armor);
+  require(solver.solve(armor), "Visible armor must have a valid IPPE solution");
   return armor;
 }
 
@@ -162,6 +162,33 @@ void least_squares_test(Solver & solver)
   std::cout << "Noisy pixel SSE: " << baseline_cost << " -> " << refined_cost << '\n';
 }
 
+void ippe_candidate_test(Solver & solver)
+{
+  auto pose = Eigen::Isometry3d::Identity();
+  pose.translation() << 4.0, 0.2, 0.3;
+  pose.linear() = rotation(170.0 * CV_PI / 180.0, ARMOR_PITCH);
+  const auto pixels = solver.reproject_armor(pose, ArmorType::small);
+  require(pixels.size() == 4, "IPPE rejection pose must be projectable");
+
+  Armor armor(0, 0.99f, cv::Rect(), pixels);
+  armor.type = ArmorType::small;
+  armor.name = ArmorName::three;
+  require(!solver.solve(armor), "IPPE candidates with armor yaw over 150 degrees must be rejected");
+
+  const Eigen::Quaterniond gimbal_q(
+    Eigen::AngleAxisd(170.0 * CV_PI / 180.0, Eigen::Vector3d::UnitZ()));
+  solver.set_R_gimbal2world(gimbal_q);
+  pose.translation() = gimbal_q * Eigen::Vector3d(4.0, 0.2, 0.3);
+  pose.linear() = gimbal_q.toRotationMatrix() * rotation(0.4, ARMOR_PITCH);
+  const auto rotated_pixels = solver.reproject_armor(pose, ArmorType::small);
+  require(rotated_pixels.size() == 4, "World-rotated armor must be projectable");
+  Armor rotated_armor(0, 0.99f, cv::Rect(), rotated_pixels);
+  rotated_armor.type = ArmorType::small;
+  rotated_armor.name = ArmorName::three;
+  require(solver.solve(rotated_armor), "Valid armor yaw must not be rejected by world yaw");
+  solver.set_R_gimbal2world(Eigen::Quaterniond::Identity());
+}
+
 void filter_test(Solver & solver)
 {
   auto truth = state(0.0, 0.12);
@@ -268,6 +295,7 @@ int main(int argc, char ** argv)
     Solver solver(argv[1]);
     projection_test(solver);
     least_squares_test(solver);
+    ippe_candidate_test(solver);
     filter_test(solver);
     outpost_test(solver);
     const Eigen::Quaterniond q(Eigen::AngleAxisd(0.15, Eigen::Vector3d::UnitZ()) *
