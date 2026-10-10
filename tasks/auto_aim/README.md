@@ -1,46 +1,54 @@
-# UV vehicle model
+# UV 平面整车滤波
 
-The vehicle state is `[x, vx, y, vy, z, vz, yaw, yaw_rate, r1, r2-r1,
-height_offset, car_pitch]`. Indices 0 through 10 retain their previous meanings.
-The vehicle rotation is `Rz(yaw) * Ry(car_pitch)`: roll is fixed at zero.
-The same rotation transforms armor center offsets and armor orientations.
-Each armor has a fixed pitch of +15 degrees relative to the vehicle; the outpost
-retains its -15 degree mounting angle. Outpost and base vehicle pitch is zero.
+整车状态为 `[x, vx, y, vy, z, vz, yaw, yaw_rate, r1, r2-r1,
+height_offset, car_pitch]`，共 12 维。原有索引 0 到 10 的含义不变，索引 11
+为整车俯仰角 `car_pitch`。位置、半径和高度的单位为米，速度为米/秒，角度为
+弧度，角速度为弧度/秒。
 
-`Solver::solve` initializes from IPPE, then minimizes the sum of squared errors
-of the four detected corners in distorted pixel coordinates using Ceres. It
-jointly estimates position, yaw and pitch with roll fixed at zero; outpost/base
-pitch is fixed. Camera-frame fields and `yaw_raw` retain the original PnP
-result for comparison. World/gimbal fields contain the optimized result.
+整车旋转为 `Rz(yaw) * Ry(car_pitch)`，横滚角 roll 固定为 0，不参与状态估计。
+该旋转同时作用于装甲板相对车体的位置偏移和姿态。普通装甲板相对整车的
+俯仰角固定为 +15°；前哨站沿用 -15° 的安装角。前哨站和基地的整车俯仰角
+固定为 0。
 
-`Target::update(armor, solver)` associates armor IDs in the image plane and
-updates the vehicle with both lights together. Each light contributes
-`[angle, center_u, center_v, length]`, giving an eight-dimensional observation.
-The observation uses the original detected pixels, not fitted/reprojected
-corners or PnP depth. The projection includes camera distortion and the current
-IMU transform; Ceres automatic differentiation supplies the state Jacobian.
-Use `Target::armor_pose(id)` with the pose overload of `reproject_armor` to
-draw the complete tilted armor pose. The old XYZ/yaw overload assumes a level
-vehicle and is retained for callers that only have an aiming point.
+`Solver::solve` 先通过 IPPE 求解 PnP 初值，再使用 Ceres 最小化四个检测角点
+在含畸变像素坐标中的重投影误差平方和。优化联合估计位置、偏航角和俯仰角，
+横滚角固定为 0；前哨站和基地的装甲板俯仰角固定。相机坐标系字段和 `yaw_raw`
+保留原始 PnP 结果，供对比使用；世界坐标系和云台坐标系字段保存优化后的结果。
 
-Optional YAML parameters (defaults work with existing configuration files):
+`Target::update(armor, solver)` 在图像平面中关联装甲板编号，并将左右灯条
+作为一次联合观测更新整车状态。每根灯条提供
+`[angle, center_u, center_v, length]`，分别表示灯条方向角、中心横坐标、
+中心纵坐标和长度，共构成 8 维观测。观测直接取自原始检测像素。
+投影包含相机畸变和当前 IMU 坐标变换，状态雅可比由 Ceres 自动微分计算。
 
-| Parameter | Default | Meaning |
+绘制倾斜装甲板时，使用 `Target::armor_pose(id)` 获取完整位姿，并调用
+`reproject_armor` 的位姿重载。原有 XYZ/yaw 重载假定整车水平，供只有瞄准点
+信息的调用方使用。
+
+以下 YAML 参数均为可选项，旧配置缺少这些字段时会采用默认值。
+`tests/uv_filter.yaml` 中还注明了跟踪、过程噪声及相机标定参数的含义。
+该文件用于合成数据回归测试，接入实机时应使用实际标定值。
+
+| 参数 | 默认值 | 含义 |
 | --- | --- | --- |
-| `car_pitch_process_noise` | `0.0001` | Vehicle pitch variance growth, rad^2/s |
-| `uv_sigma_center_ratio` | `0.2` | Center standard deviation / light length |
-| `uv_sigma_length_ratio` | `0.3` | Length standard deviation / light length |
-| `uv_sigma_angle` | `0.1` | Light angle standard deviation, rad |
+| `car_pitch_process_noise` | `0.0001` | 整车俯仰角过程噪声方差的增长率，单位 rad²/s，必须非负 |
+| `uv_sigma_center_ratio` | `0.2` | 灯条中心坐标噪声标准差与灯条像素长度的比例，必须大于 0 |
+| `uv_sigma_length_ratio` | `0.3` | 灯条长度噪声标准差与灯条像素长度的比例，必须大于 0 |
+| `uv_sigma_angle` | `0.1` | 灯条方向角噪声标准差，单位 rad，必须大于 0 |
 
-As in awakening, measurement variances are half the squared standard deviations.
-Center/length noise has a 0.5/1 pixel floor. Angle residuals wrap at +/-pi.
-NIS uses the prior innovation and the eight-dimensional 95% threshold of
-15.5073. The filter also supports exact fixed states without inverting a
-singular covariance. UV diagnostics use `residual_left_*` and
-`residual_right_*`, where `*` is `angle`, `u`, `v` or `length`. Position/length
-residuals are pixels and angle residuals are radians.
+沿用 awakening 的设置，观测噪声方差取标准差平方的一半。
+中心坐标和长度的标准差下限分别为 0.5 像素和 1 像素，角度残差归一化到
+±π。噪声参数增大时，对对应观测的信任程度降低。
+整车俯仰角的过程噪声为 `abs(dt) * car_pitch_process_noise`，参数越大，
+滤波器允许俯仰角变化得越快；前哨站和基地不加入该噪声。
 
-Run the hardware-independent regression checks with:
+NIS 使用更新前的创新计算，采用 8 维观测对应的 95% 卡方阈值 15.5073。
+滤波器支持协方差为零的固定状态，避免直接求逆奇异协方差。
+UV 调试残差使用 `residual_left_*` 和 `residual_right_*` 字段，
+其中 `*` 为 `angle`、`u`、`v` 或 `length`。
+中心坐标和长度残差的单位为像素，角度残差的单位为弧度。
+
+运行不依赖硬件的回归测试：
 
 ```sh
 cmake -S . -B build
