@@ -1,15 +1,38 @@
+# UV 滤波合成数据测试配置；实机使用时需替换为实际相机标定值。
+
 enemy_color: blue
 min_detect_count: 3
 max_temp_lost_count: 15
 outpost_max_temp_lost_count: 75
+
 v1: 5
 v2: 350
+
 R_gimbal2imubody: [-1, 0, 0, 0, -1, 0, 0, 0, 1]
+
 R_camera2gimbal: [0, 0, 1, -1, 0, 0, 0, -1, 0]
 t_camera2gimbal: [0.12, 0.01, 0.16]
+
 camera_matrix: [1924, 0, 640, 0, 1923, 532, 0, 0, 1]
 distort_coeffs: [0.003, 0.5, 0.001, -0.002, 0.01]
+
+# 灯条中心 u/v 坐标噪声标准差与灯条像素长度 L 的比例，必须 > 0。
+# sigma_center = max(0.5, uv_sigma_center_ratio * L)，单位像素。
+# 对应观测方差为 sigma_center² / 2；值越大，越不信任中心坐标观测。
 uv_sigma_center_ratio: 0.2
+# 灯条长度噪声标准差与灯条像素长度 L 的比例，必须 > 0。
+# sigma_length = max(1.0, uv_sigma_length_ratio * L)，单位像素。
+# 对应观测方差为 sigma_length² / 2；值越大，越不信任长度观测。
 uv_sigma_length_ratio: 0.3
+# 灯条方向角噪声标准差，单位 rad，必须 > 0。
+# 对应观测方差为 uv_sigma_angle² / 2；值越大，越不信任方向角观测。
 uv_sigma_angle: 0.1
+# 整车俯仰角过程噪声方差的增长率，单位 rad²/s，必须 >= 0。
+# 每次预测加入 Q_pitch = abs(dt) * car_pitch_process_noise。
+# 值越大，越允许整车俯仰角变化；前哨站和基地俯仰角固定为 0，不加入该噪声。
 car_pitch_process_noise: 0.0001
+# 整车横滚角过程噪声方差的增长率，单位 rad²/s，必须 >= 0。
+# 每次预测加入 Q_roll = abs(dt) * car_roll_process_noise，不增加横滚角速度状态。
+# 值越大，越允许横滚角变化；小噪声不会将角度拉回 0，也不限定在 ±几度。
+# 前哨站和基地横滚角固定为 0，不加入该噪声；旧配置缺省值为 0.0001。
+car_roll_process_noise: 0.0001
