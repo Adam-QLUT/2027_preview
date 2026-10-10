@@ -1,0 +1,15 @@
+enemy_color: blue
+min_detect_count: 3
+max_temp_lost_count: 15
+outpost_max_temp_lost_count: 75
+v1: 5
+v2: 350
+R_gimbal2imubody: [-1, 0, 0, 0, -1, 0, 0, 0, 1]
+R_camera2gimbal: [0, 0, 1, -1, 0, 0, 0, -1, 0]
+t_camera2gimbal: [0.12, 0.01, 0.16]
+camera_matrix: [1924, 0, 640, 0, 1923, 532, 0, 0, 1]
+distort_coeffs: [0.003, 0.5, 0.001, -0.002, 0.01]
+uv_sigma_center_ratio: 0.2
+uv_sigma_length_ratio: 0.3
+uv_sigma_angle: 0.1
+car_pitch_process_noise: 0.0001

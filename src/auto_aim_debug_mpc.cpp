@@ -76,7 +76,7 @@ int main(int argc, char * argv[])
       data["gimbal_pitch"] = gs.pitch;
       data["gimbal_pitch_vel"] = gs.pitch_vel;
 
-      // IMU 四元数队列积压长度：常驻偏大说明消费跟不上，图像-四元数对齐会取到陈旧数据
+      // IMU 四元数队列积压长度
       data["imu_queue"] = gimbal.queue_size();
 
       data["target_yaw"] = plan.target_yaw;
@@ -96,6 +96,8 @@ int main(int argc, char * argv[])
       if (target.has_value()) {
         data["target_z"] = target->ekf_x()[4];   //z
         data["target_vz"] = target->ekf_x()[5];  //vz
+        data["car_pitch"] = target->ekf_x()[11] * 180.0 / CV_PI;
+        for (const auto & item : target->ekf().data) data[item.first] = item.second;
       }
 
       if (target.has_value()) {
@@ -132,9 +134,9 @@ int main(int argc, char * argv[])
 
       // 当前帧target更新后
       std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
-      for (const Eigen::Vector4d & xyza : armor_xyza_list) {
+      for (std::size_t id = 0; id < armor_xyza_list.size(); ++id) {
         auto image_points =
-          solver.reproject_armor(xyza.head(3), xyza[3], target.armor_type, target.name);
+          solver.reproject_armor(target.armor_pose(id), target.armor_type);
         tools::draw_points(img, image_points, {0, 255, 0});
       }
 

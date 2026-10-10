@@ -6,6 +6,7 @@
 #include <opencv2/core/eigen.hpp>
 
 #include "armor.hpp"
+#include "motion_model.hpp"
 
 namespace auto_aim
 {
@@ -23,6 +24,15 @@ public:
   std::vector<cv::Point2f> reproject_armor(
     const Eigen::Vector3d & xyz_in_world, double yaw, ArmorType type, ArmorName name) const;
 
+  std::vector<cv::Point2f> reproject_armor(
+    const Eigen::Isometry3d & pose, ArmorType type) const;
+
+  Eigen::VectorXd armor_uv_observation(const Armor & armor) const;
+  Eigen::MatrixXd armor_uv_noise(const Armor & armor) const;
+  bool armor_uv_prediction(
+    const Eigen::VectorXd & x, int id, int armor_num, ArmorType type, ArmorName name,
+    Eigen::VectorXd & observation, Eigen::MatrixXd * jacobian = nullptr) const;
+
   double oupost_reprojection_error(Armor armor, const double & picth);
 
   std::vector<cv::Point2f> world2pixel(const std::vector<cv::Point3f> & worldPoints);
@@ -35,12 +45,12 @@ private:
   Eigen::Vector3d t_camera2gimbal_;
   Eigen::Matrix3d R_gimbal2world_;
 
-  void optimize_yaw(Armor & armor) const;
+  double uv_sigma_center_ratio_ = 0.2;
+  double uv_sigma_length_ratio_ = 0.3;
+  double uv_sigma_angle_ = 0.1;
 
-  double armor_reprojection_error(const Armor & armor, double yaw, const double & inclined) const;
-  double SJTU_cost(
-    const std::vector<cv::Point2f> & cv_refs, const std::vector<cv::Point2f> & cv_pts,
-    const double & inclined) const;
+  motion_model::Camera camera() const;
+  void optimize_pose(Armor & armor) const;
 };
 
 }  // namespace auto_aim

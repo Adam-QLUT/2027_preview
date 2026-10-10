@@ -14,11 +14,12 @@
 
 namespace auto_aim
 {
+class Solver;
 
 class Target
 {
 public:
-  ArmorName name;
+  ArmorName name = ArmorName::not_armor;
   ArmorType armor_type;
   ArmorPriority priority;
   bool jumped;
@@ -27,16 +28,17 @@ public:
   Target() = default;
   Target(
     const Armor & armor, std::chrono::steady_clock::time_point t, double radius, int armor_num,
-    Eigen::VectorXd P0_dig, double v1 = 100, double v2 = 400);
+    Eigen::VectorXd P0_dig, double v1 = 100, double v2 = 400, double q_pitch = 1e-4);
   Target(double x, double vyaw, double radius, double h);
 
   void predict(std::chrono::steady_clock::time_point t);
   void predict(double dt);
-  void update(const Armor & armor);
+  void update(const Armor & armor, const Solver & solver);
 
   Eigen::VectorXd ekf_x() const;
   const tools::ExtendedKalmanFilter & ekf() const;
   std::vector<Eigen::Vector4d> armor_xyza_list() const;
+  Eigen::Isometry3d armor_pose(int id) const;
 
   bool diverged() const;
 
@@ -58,19 +60,18 @@ private:
 
   double v1_;  // 加速度方差
   double v2_;  // 角加速度方差
+  double q_pitch_ = 1e-4;
 
   tools::ExtendedKalmanFilter ekf_;
   std::chrono::steady_clock::time_point t_;
 
-  void update_ypda(const Armor & armor, int id);  // yaw pitch distance angle
+  void update_uv(const Armor & armor, int id, const Solver & solver);
   void lock_outpost_rotation_direction();
   void enforce_outpost_radius();
   void initialize_outpost_height(const Armor & armor, int id);
   void clamp_outpost_height_offsets();
-  double association_error(const Armor & armor, const Eigen::Vector4d & xyza, int id) const;
+  double association_error(const Armor & armor, int id, const Solver & solver) const;
 
-  Eigen::Vector3d h_armor_xyz(const Eigen::VectorXd & x, int id) const;
-  Eigen::MatrixXd h_jacobian(const Eigen::VectorXd & x, int id) const;
 };
 
 }  // namespace auto_aim

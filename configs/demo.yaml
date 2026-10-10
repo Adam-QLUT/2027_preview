@@ -1,5 +1,5 @@
-# enemy_color: "red"
 enemy_color: "blue"
+#enemy_color: "blue"
 
 debug: true
 
@@ -12,7 +12,7 @@ yolov5_model_path: assets/yolov5.xml
 yolov5n_model_path: assets/Infantry-v5n-Release-20260725.xml # original是原先的v5模型，yolov5n是2026深圳大学开源
 yolov5_variant: yolov5n
 device: CPU
-min_confidence: 0.7
+min_confidence: 0.82
 use_traditional: true
 
 #####-----ROI-----#####
@@ -56,9 +56,9 @@ second_tolerance: 2 # 远距离射击容差，degree
 judge_distance: 2 #距离判断阈值
 auto_fire: true # 是否由自瞄控制射击
 
-camera_name: "mindvision"
+camera_name: "hikrobot"
 exposure_ms: 4
-gain: 16
+gain: 15
 gamma: 0.8
 vid_pid: "2bdf:0001"
 
@@ -94,7 +94,7 @@ max_pitch_acc: 100
 Q_pitch: [9e6,0]
 R_pitch: [1]
 
-v1: 200 #加速度方差
+v1: 5 #加速度方差
 v2: 350 #角速度方差 
 
 #####-----buff_detector参数-----#####

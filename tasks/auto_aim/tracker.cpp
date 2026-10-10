@@ -26,6 +26,10 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   normal_temp_lost_count_ = max_temp_lost_count_;
   v1_ = yaml["v1"].IsDefined() ? yaml["v1"].as<double>() : 100.0;
   v2_ = yaml["v2"].IsDefined() ? yaml["v2"].as<double>() : 400.0;
+  q_pitch_ = yaml["car_pitch_process_noise"] ? yaml["car_pitch_process_noise"].as<double>() : 1e-4;
+  if (!std::isfinite(q_pitch_) || q_pitch_ < 0) {
+    throw std::invalid_argument("Car pitch process noise must be finite and nonnegative");
+  }
 }
 
 std::string Tracker::state() const { return state_; }
@@ -242,17 +246,17 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
   if (armor.name == ArmorName::outpost) {
     // l/h are the two unknown armor height offsets relative to the first observed armor.
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 81, 0.4, 100, 0, 4e-2, 4e-2}};
-    target_ = Target(armor, t, 0.2765, 3, P0_dig, v1_, v2_);
+    target_ = Target(armor, t, 0.2765, 3, P0_dig, v1_, v2_, q_pitch_);
   }
   //基地
   else if (armor.name == ArmorName::base) {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}};
-    target_ = Target(armor, t, 0.3205, 3, P0_dig, v1_, v2_);
+    target_ = Target(armor, t, 0.3205, 3, P0_dig, v1_, v2_, q_pitch_);
   }
 
   else {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
-    target_ = Target(armor, t, 0.2, 4, P0_dig, v1_, v2_);
+    target_ = Target(armor, t, 0.2, 4, P0_dig, v1_, v2_, q_pitch_);
   }
 
   return true;
@@ -281,7 +285,7 @@ bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock
 
     solver_.solve(armor);
 
-    target_.update(armor);
+    target_.update(armor, solver_);
   }
 
   return true;

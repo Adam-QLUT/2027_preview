@@ -187,9 +187,9 @@ int main(int argc, char * argv[])
 
       // 当前帧target更新后
       armor_xyza_list = target.armor_xyza_list();
-      for (const Eigen::Vector4d & xyza : armor_xyza_list) {
+      for (std::size_t id = 0; id < armor_xyza_list.size(); ++id) {
         auto image_points =
-          solver.reproject_armor(xyza.head(3), xyza[3], target.armor_type, target.name);
+          solver.reproject_armor(target.armor_pose(id), target.armor_type);
         tools::draw_points(img, image_points, {0, 255, 0});
       }
 
