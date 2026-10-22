@@ -6,7 +6,6 @@
 #include <openvino/openvino.hpp>
 #include <string>
 #include <vector>
-#include <array>
 
 #include "tasks/auto_aim/armor.hpp"
 #include "tasks/auto_aim/detector.hpp"
@@ -28,7 +27,6 @@ private:
   std::string device_, model_path_;
   std::string save_path_, debug_path_;
   bool debug_, use_roi_, use_traditional_;
-  bool use_direct_fp32_input_ = false;
 
   const int class_num_ = 9;
   const int color_num_ = 4;
@@ -39,11 +37,6 @@ private:
   ov::Core core_;
   ov::CompiledModel compiled_model_;
   ov::InferRequest infer_request_;
-  std::array<ov::InferRequest, 2> async_requests_;
-  std::array<cv::Mat, 2> async_inputs_;
-  std::size_t async_submit_ = 0;
-  std::size_t async_ready_ = 0;
-  bool async_started_ = false;
 
   cv::Rect roi_;
   cv::Point2f offset_;

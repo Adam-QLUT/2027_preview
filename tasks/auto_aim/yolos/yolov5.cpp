@@ -29,7 +29,6 @@ YOLOV5::YOLOV5(const std::string & config_path, bool debug)
   } else {
     throw std::runtime_error("Unknown yolov5_variant: " + variant);
   }
-  use_direct_fp32_input_ = (variant == "yolov5n");
   device_ = yaml["device"].as<std::string>();
   binary_threshold_ = yaml["threshold"].as<double>();
   min_confidence_ = yaml["min_confidence"].as<double>();
@@ -46,37 +45,27 @@ YOLOV5::YOLOV5(const std::string & config_path, bool debug)
   save_path_ = "imgs";
   std::filesystem::create_directory(save_path_);
   auto model = core_.read_model(model_path_);
-  ov::AnyMap compile_config;
-  compile_config[ov::hint::performance_mode.name()] = ov::hint::PerformanceMode::LATENCY;
-  if (use_direct_fp32_input_ && device_ == "GPU")
-    compile_config[ov::hint::inference_precision.name()] = ov::element::f16;
-  if (!use_direct_fp32_input_) {
-    ov::preprocess::PrePostProcessor ppp(model);
-    auto & input = ppp.input();
-    input.tensor().set_element_type(ov::element::u8).set_shape({1, 640, 640, 3})
-      .set_layout("NHWC").set_color_format(ov::preprocess::ColorFormat::BGR);
-    input.model().set_layout("NCHW");
-    input.preprocess().convert_element_type(ov::element::f32)
-      .convert_color(ov::preprocess::ColorFormat::RGB).scale(255.0);
-    model = ppp.build();
-  }
+  ov::preprocess::PrePostProcessor ppp(model);
+  auto & input = ppp.input();
+
+  input.tensor()
+    .set_element_type(ov::element::u8)
+    .set_shape({1, 640, 640, 3})
+    .set_layout("NHWC")
+    .set_color_format(ov::preprocess::ColorFormat::BGR);
+
+  input.model().set_layout("NCHW");
+
+  input.preprocess()
+    .convert_element_type(ov::element::f32)
+    .convert_color(ov::preprocess::ColorFormat::RGB)
+    .scale(255.0);
+
+  // TODO: ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY)
+  model = ppp.build();
   compiled_model_ = core_.compile_model(
-    model, device_, compile_config);
-  if (use_direct_fp32_input_) {
-    for (std::size_t i = 0; i < async_requests_.size(); ++i) {
-      async_requests_[i] = compiled_model_.create_infer_request();
-      async_inputs_[i] = cv::Mat(1, 3 * 640 * 640, CV_32F);
-    }
-    async_inputs_[0].setTo(0.0f);
-    ov::Tensor warmup(ov::element::f32, {1, 3, 640, 640}, async_inputs_[0].ptr<float>());
-    async_requests_[0].set_input_tensor(warmup);
-    async_requests_[0].start_async();
-    async_submit_ = 1;
-    async_ready_ = 0;
-    async_started_ = true;
-  } else {
-    infer_request_ = compiled_model_.create_infer_request();
-  }
+    model, device_, ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+  infer_request_ = compiled_model_.create_infer_request();
 }
 
 std::list<Armor> YOLOV5::detect(const cv::Mat & raw_img, int frame_count)
@@ -112,35 +101,10 @@ std::list<Armor> YOLOV5::detect(const cv::Mat & raw_img, int frame_count)
   auto input = cv::Mat(640, 640, CV_8UC3, cv::Scalar(124, 124, 124));
   auto roi = cv::Rect(pad_x_, pad_y_, w, h);
   cv::resize(bgr_img, input(roi), {w, h});
-  cv::Mat input_blob;
-  if (use_direct_fp32_input_) {
-    input_blob = cv::dnn::blobFromImage(input, 1.0 / 255.0, cv::Size(640, 640),
-      cv::Scalar(), true, false, CV_32F);
-    input_blob.copyTo(async_inputs_[async_submit_]);
-  }
+  ov::Tensor input_tensor(ov::element::u8, {1, 640, 640, 3}, input.data);
 
   // infer
-  if (use_direct_fp32_input_) {
-    ov::Tensor input_tensor(ov::element::f32, {1, 3, 640, 640},
-      async_inputs_[async_submit_].ptr<float>());
-    async_requests_[async_submit_].set_input_tensor(input_tensor);
-    async_requests_[async_submit_].start_async();
-    async_requests_[async_ready_].wait();
-    auto output_tensor = async_requests_[async_ready_].get_output_tensor();
-    auto output_shape = output_tensor.get_shape();
-    if (output_shape.size() != 3 || output_shape[0] != 1 || output_shape[1] != 25200 ||
-        output_shape[2] != 22) {
-      tools::logger()->error("Unexpected YOLOv5 output shape");
-      return {};
-    }
-    cv::Mat output(output_shape[1], output_shape[2], CV_32F, output_tensor.data());
-    async_submit_ = (async_submit_ + 1) % async_requests_.size();
-    async_ready_ = (async_ready_ + 1) % async_requests_.size();
-    return parse(scale, output, raw_img, frame_count);
-  } else {
-    ov::Tensor input_tensor(ov::element::u8, {1, 640, 640, 3}, input.data);
-    infer_request_.set_input_tensor(input_tensor);
-  }
+  infer_request_.set_input_tensor(input_tensor);
   infer_request_.infer();
 
   // postprocess
