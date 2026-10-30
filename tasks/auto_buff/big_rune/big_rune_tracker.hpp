@@ -53,7 +53,7 @@ public:
   // 连续化相位（建模坐标系）。建模前等于 phase()。
   double continuous_phase() const;
   // 运动方程（model_ready() 为 false 时内容无意义）
-  const big_rune::MotionModelParams & motion() const { return filter_->get_motion(); }
+  //const big_rune::MotionModelParams & motion() const { return filter_->get_motion(); }    可能有shit，但是没调用
 
   // ===== 预测输出（与 Target 的 aimer 消费语义对齐）=====
   // 预测"拍照时刻 + dt"的相位（连续域，建模坐标系）

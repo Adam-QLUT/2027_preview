@@ -114,15 +114,10 @@ distort_coeffs: [-0.053935005818347745, 0.099523851213960096, -0.002346880195650
 R_camera2gimbal: [0, 0, 1, -1, 0, 0, 0, -1, 0]
 t_camera2gimbal: [0.11994017, 0.0, 0.16147]
 
-#####-----buff参数-----#####
-#####-----buff_aimer参数-----#####
-fire_gap_time: 0.600 # s
-predict_time: 0.154 # s (原0.125提前量不够，增大)
-
 # ===== HW auto_buff 配置 =====
 hw_buff:
-  engine_path: "/home/asus/Alan/2027_preview/tasks/auto_buff/hw_buff_algo/config/buff.engine"
-  config_dir: "/home/asus/Alan/2027_preview/tasks/auto_buff/hw_buff_algo/config"
+  engine_path: "tasks/auto_buff/hw_buff_algo/config/buff.engine" #没用
+  config_dir: "tasks/auto_buff/hw_buff_algo/config" #没用
   buff_color: 1
   run_mode: 1
   confidence_threshold: 0.5
@@ -159,4 +154,4 @@ hw_buff:
 
 # ===== SZU RuneModel 配置 =====
 rune_model:
-  path: "/home/asus/Alan/2027_preview/assets/rune_model/Rune-v8n-fp16-20260624-D14367-B16.xml"
+  path: "assets/rune_model/Rune-v8n-fp16-20260624-D14367-B16.xml"
