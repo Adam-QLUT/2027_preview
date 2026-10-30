@@ -28,7 +28,7 @@ bool BigRunePhaseMotionFilter::calculate_motion(std::vector<CandidateTarget> && 
   return m_is_motion_model_vaild;
 }
 
-const CandidateTarget BigRunePhaseMotionFilter::get_target() const
+const TrackedTarget & BigRunePhaseMotionFilter::get_target() const
 {
   return m_tracked_target_deque.back();
 }
@@ -381,7 +381,8 @@ void BigRunePhaseMotionFilter::update_tracked_target_deque()
   // 选择目标
   const int track_index = choose_tracked_target(m_ori_candidate_targets_deque.back());
   const bool is_jump = is_phase_jump(m_ori_candidate_targets_deque.back()[track_index]);
-  m_jump_deque.emplace_back(Jump(is_jump, m_ori_candidate_targets_deque.back()[track_index].capture_timestamp));
+  m_jump_deque.emplace_back(
+    Jump{is_jump, m_ori_candidate_targets_deque.back()[track_index].capture_timestamp});
 
   if (is_jump) {
     // 处理跳变情况

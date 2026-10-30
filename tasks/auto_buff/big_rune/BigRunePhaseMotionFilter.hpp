@@ -39,7 +39,9 @@ public:
   // 追踪队列是否非空。建模前（数据量不足 min_data_size）队列为空，
   // 此时 get_target() 不可用——调用方必须先检查本接口。
   bool has_tracked_target() const { return !m_tracked_target_deque.empty(); }
-  virtual const CandidateTarget get_target() const;                          // 获取目标
+  // 返回追踪目标引用（含 continuous_phase）。调用前必须先 has_tracked_target()，
+  // 否则会解引用空 deque。
+  virtual const TrackedTarget & get_target() const;                          // 获取目标
   virtual const MotionModelParams get_motion() const;                        // 获取运动方程
   void set_rotation_direction(RotationDirection rotation_direction);         // 设置旋转方向
 
