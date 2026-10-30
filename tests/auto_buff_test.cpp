@@ -47,7 +47,7 @@ int main(int argc, char * argv[])
   auto_buff::Buff_Detector detector(config_path);
   auto_buff::Solver solver(config_path);
   // auto_buff::SmallTarget target;
-  auto_buff::BigTarget target;
+  auto_buff::BigTarget target(config_path);
   auto_buff::Aimer aimer(config_path);
 
   cv::Mat img, drawing;

@@ -123,3 +123,45 @@ detect:
 aim_time: 0.200 # s
 wait_time: 0.050 # s
 predict_time: 0.300 # s
+
+# ===== HW auto_buff 配置 =====
+hw_buff:
+  engine_path: "/home/asus/Alan/2027_preview/tasks/auto_buff/hw_buff_algo/config/buff.engine"
+  config_dir: "/home/asus/Alan/2027_preview/tasks/auto_buff/hw_buff_algo/config"
+  buff_color: 1
+  run_mode: 1
+  confidence_threshold: 0.5
+  nms_threshold: 0.45
+  big_phase_motion_estimate:
+    max_time_interval: 3.0
+    prepare_time: 180
+    window_settling_time: 8.0
+    min_data_size_to_build_motion_model: 100
+    acceptable_time_interval_to_confirm_rotation: 0.15
+    target_switch_threshold: 0.77
+    expect_phase_linear_velocity: 1.1775
+    highest_time_weight: 1.0
+    lowwest_time_weight: 0.2
+    filter_window_size: 7
+    speed_angular_frequency_init: 1.942
+    phase_cos_coefficient_init: -0.3322528
+    phase_sin_coefficient_init: 0.3322528
+    phase_linear_velocity_init: 1.1775
+    phase_constant_offset_radians_init: 0
+    omega_lower_bound: 1.884
+    omega_upper_bound: 2.000
+    outer_max_iterations: 20
+    inner_max_iterations: 40
+    robust_scale_factor: 2.5
+    inner_tolerance: 1.0e-2
+    lambda_init: 1.0e-2
+    lambda_min: 1.0e-6
+    lambda_max: 1000000.0
+    outer_tolerance: 1.0e-5
+    max_omega_step: 0.05
+    diff_eps_min: 1.0e-4
+    diff_eps_rel_init: 1.0e-3
+
+# ===== SZU RuneModel 配置 =====
+rune_model:
+  path: "/home/asus/Alan/2027_preview/assets/rune_model/Rune-v8n-fp16-20260624-D14367-B16.xml"

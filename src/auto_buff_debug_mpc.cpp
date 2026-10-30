@@ -1,4 +1,4 @@
-﻿#include <fmt/format.h>
+#include <fmt/format.h>
 
 #include <string>
 
@@ -44,7 +44,7 @@ int main(int argc, char * argv[])
   // 初始化识别器、解算器、追踪器、瞄准器
   auto_buff::Buff_Detector detector(config_path);
   auto_buff::Solver solver(config_path);
-  auto_buff::SmallTarget target;
+  auto_buff::SmallTarget target(config_path);
   // auto_buff::BigTarget target;
   auto_buff::Aimer aimer(config_path);
 

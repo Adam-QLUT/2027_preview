@@ -1,149 +1,101 @@
 #include "buff_detector.hpp"
 
+#include <exception>
+#include <opencv2/core.hpp>
+
+#include "network_deployment_interface.hpp"
 #include "tools/logger.hpp"
 
 namespace auto_buff
 {
-Buff_Detector::Buff_Detector(const std::string & config) : status_(LOSE), lose_(0), MODE_(config) {}
-
-void Buff_Detector::handle_img(const cv::Mat & bgr_img, cv::Mat & dilated_img)
+Buff_Detector::Buff_Detector(const std::string & config) : status_(LOSE), lose_(0)
 {
-  // 彩色图转灰度图
-  cv::Mat gray_img;
-  cv::cvtColor(bgr_img, gray_img, cv::COLOR_BGR2GRAY);  // 彩色图转灰度图
-  // cv::imshow("gray", gray_img);  // 调试用
-
-  // 进行二值化           :把高于100变成255，低于100变成0
-  cv::Mat binary_img;
-  cv::threshold(gray_img, binary_img, 100, 255, cv::THRESH_BINARY);
-  // cv::imshow("binary", binary_img);  // 调试用
-
-  // 膨胀
-  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));  // 使用矩形核
-  cv::dilate(binary_img, dilated_img, kernel, cv::Point(-1, -1), 1);
-  // cv::imshow("Dilated Image", dilated_img);  // 调试用
+  auto yaml = YAML::LoadFile(config);
+  const std::string model_path = yaml["rune_model"]["path"].as<std::string>();
+  // SZU RuneModel：OpenVINO 后端，Intel 集显用 GPU device
+  //
+  // 必须用 sync：async 模式下 netProcess(第 N 帧) 返回的是第 N-1 帧的推理结果
+  // （SZU 库 network_deployment_openvino.cpp 的 asyncInfer 提交当前帧、却取上一帧的输出，
+  //  调用方需要自行按 pipeline_delay 对齐）。而本模块用当前帧的 IMU 与时间戳做 PnP/预测，
+  // 不补偿就会引入整整 1 帧的系统性滞后；SZU 库本身也提示"标准情况下打符应该使用 sync 推理"。
+  try {
+    rune_model_ = std::make_unique<RuneModel>(model_path, "sync", "openvino", "GPU");
+  } catch (const std::exception & e) {
+    // 模型缺失 / device 不可用 / 形状不匹配等：不要让整个程序 terminate
+    tools::logger()->error(
+      "[BuffDetector] RuneModel 加载失败，打符检测将全程返回空: {} (path={})", e.what(), model_path);
+    rune_model_.reset();
+  }
 }
 
-cv::Point2f Buff_Detector::get_r_center(std::vector<FanBlade> & fanblades, cv::Mat & bgr_img)
-{
-  /// error
-
-  if (fanblades.empty()) {
-    tools::logger()->debug("[Buff_Detector] 无法计算r_center!");
-    return {0, 0};
-  }
-
-  /// 算出大概位置
-
-  cv::Point2f r_center_t = {0, 0};
-  for (auto & fanblade : fanblades) {
-    auto point5 = fanblade.points[4];  // point5是扇叶的中心
-    auto point6 = fanblade.points[5];
-    r_center_t += (point6 - point5) * 1.4 + point5;  // TODO
-    // r_center_t += 4.7 * point - (4.7 - 1) * fanblade.center;
-  }
-  r_center_t /= float(fanblades.size());
-
-  /// 处理图片,mask选出大概范围
-
-  cv::Mat dilated_img;
-  handle_img(bgr_img, dilated_img);
-  double radius = cv::norm(fanblades[0].points[2] - fanblades[0].center) * 0.8;
-  cv::Mat mask = cv::Mat::zeros(dilated_img.size(), CV_8U);  // mask
-  circle(mask, r_center_t, radius, cv::Scalar(255), -1);
-  bitwise_and(dilated_img, mask, dilated_img);               // 将遮罩应用于二值化图像
-  tools::draw_point(bgr_img, r_center_t, {255, 255, 0}, 5);  // 调试用
-  // cv::imshow("Dilated Image", dilated_img);                // 调试用
-
-  /// 获取轮廓点,矩阵框筛选  TODO
-
-  std::vector<std::vector<cv::Point>> contours;
-  auto r_center = r_center_t;
-  cv::findContours(
-    dilated_img, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);  // external找外部区域
-  double ratio_1 = INF;
-  for (auto & it : contours) {
-    auto rotated_rect = cv::minAreaRect(it);
-    double ratio = rotated_rect.size.height > rotated_rect.size.width
-                     ? rotated_rect.size.height / rotated_rect.size.width
-                     : rotated_rect.size.width / rotated_rect.size.height;
-    ratio += cv::norm(rotated_rect.center - r_center_t) / (radius / 3);
-    if (ratio < ratio_1) {
-      ratio_1 = ratio;
-      r_center = rotated_rect.center;
-    }
-  }
-  return r_center;
-};
+Buff_Detector::~Buff_Detector() = default;
 
 void Buff_Detector::handle_lose()
 {
   lose_++;
   if (lose_ >= LOSE_MAX) {
-    status_ = LOSE;
     last_powerrune_ = std::nullopt;
+    status_ = LOSE;
+  } else {
+    status_ = TEM_LOSE;
   }
-  status_ = TEM_LOSE;
-}
-
-std::optional<PowerRune> Buff_Detector::detect_24(cv::Mat & bgr_img)
-{
-  /// onnx 模型检测
-
-  std::vector<YOLO11_BUFF::Object> results = MODE_.get_multicandidateboxes(bgr_img);
-
-  /// 处理未获得的情况
-
-  if (results.empty()) {
-    handle_lose();
-    return std::nullopt;
-  }
-
-  /// results转扇叶FanBlade
-
-  std::vector<FanBlade> fanblades;
-  for (auto & result : results) fanblades.emplace_back(FanBlade(result.kpt, result.kpt[4], _light));
-
-  /// 生成PowerRune
-  auto r_center = get_r_center(fanblades, bgr_img);
-  PowerRune powerrune(fanblades, r_center, last_powerrune_);
-
-  /// handle error
-  if (powerrune.is_unsolve()) {
-    handle_lose();
-    return std::nullopt;
-  }
-
-  status_ = TRACK;
-  lose_ = 0;
-  std::optional<PowerRune> P;
-  P.emplace(powerrune);
-  last_powerrune_ = P;
-  return P;
 }
 
 std::optional<PowerRune> Buff_Detector::detect(cv::Mat & bgr_img)
 {
-  /// onnx 模型检测
+  if (!rune_model_) {
+    handle_lose();
+    return std::nullopt;
+  }
 
-  std::vector<YOLO11_BUFF::Object> results = MODE_.get_onecandidatebox(bgr_img);
-
-  /// 处理未获得的情况
+  std::vector<NetRuneResult> results;
+  try {
+    results = rune_model_->netProcess(bgr_img);
+  } catch (const std::exception & e) {
+    if (!net_error_logged_) {
+      tools::logger()->error("[BuffDetector] 推理抛异常，之后按丢失处理: {}", e.what());
+      net_error_logged_ = true;
+    }
+    handle_lose();
+    return std::nullopt;
+  }
 
   if (results.empty()) {
     handle_lose();
     return std::nullopt;
   }
 
-  /// results转扇叶FanBlade
+  // 取置信度最高的一个结果（SZU 后处理已按 score 降序，results[0] 即最高分）
+  const auto & r = results[0];
 
+  // 类别变化时打一行日志：0=未激活, 1=小符已激活, 2=大符已激活。
+  // 用于确认模型确实在报"小符已激活"，以及 results[0] 取到的不是"未激活"的扇叶。
+  if (r.class_id != last_class_id_) {
+    last_class_id_ = r.class_id;
+    tools::logger()->info(
+      "[BuffDetector] 选中类别变化: class_id={} (\"{}\") score={:.3f} 候选数={}", r.class_id,
+      r.class_name, r.score, results.size());
+  }
+
+  // SZU 5 点: top, left, R, right, bottom；PnP 只需 4 角点（上/左/下/右）
+  const cv::Point2f top(r.top), left(r.left), bottom(r.bottom), right(r.right);
+  const cv::Point2f point_r(r.point_R);
+  std::vector<cv::Point2f> kpt = {top, left, bottom, right};
   std::vector<FanBlade> fanblades;
-  auto result = results[0];
-  fanblades.emplace_back(FanBlade(result.kpt, result.kpt[4], _light));
+  fanblades.emplace_back(FanBlade(kpt, point_r, _light));
 
-  /// 生成PowerRune
-  auto r_center = get_r_center(fanblades, bgr_img);
-  PowerRune powerrune(fanblades, r_center, last_powerrune_);
+  /// 生成PowerRune（r_center 直接使用模型输出的 R 字中心）
+  PowerRune powerrune(fanblades, point_r, last_powerrune_);
+
+  /// 双候选收集：取与主候选同类别、置信度次高的另一片叶。
+  /// 大符切换期两叶短暂同亮，此时 results[1] 是另一片亮叶；相位引擎用双候选
+  /// 做连续目标切换（避免单候选在切换瞬间被误判成跳变）。每帧至多 1 个副候选。
+  for (size_t i = 1; i < results.size() && powerrune.extra_blades_pix.empty(); i++) {
+    if (results[i].class_id != r.class_id) continue;
+    powerrune.extra_blades_pix.push_back(
+      {cv::Point2f(results[i].top), cv::Point2f(results[i].left),
+       cv::Point2f(results[i].bottom), cv::Point2f(results[i].right)});
+  }
 
   /// handle error
   if (powerrune.is_unsolve()) {
@@ -156,39 +108,6 @@ std::optional<PowerRune> Buff_Detector::detect(cv::Mat & bgr_img)
   std::optional<PowerRune> P;
   P.emplace(powerrune);
   last_powerrune_ = P;
-  return P;
-}
-
-std::optional<PowerRune> Buff_Detector::detect_debug(cv::Mat & bgr_img, cv::Point2f v)
-{
-  /// onnx 模型检测
-
-  std::vector<YOLO11_BUFF::Object> results = MODE_.get_multicandidateboxes(bgr_img);
-
-  /// 处理未获得的情况
-
-  if (results.empty()) return std::nullopt;
-
-  /// results转扇叶FanBlade
-
-  std::vector<FanBlade> fanblades_t;
-  for (auto & result : results)
-    fanblades_t.emplace_back(FanBlade(result.kpt, result.kpt[4], _light));
-
-  /// 计算r_center,筛选fanblade
-  auto r_center = get_r_center(fanblades_t, bgr_img);
-  std::vector<FanBlade> fanblades;
-  for (auto & fanblade : fanblades_t) {
-    if (cv::norm((fanblade.center - r_center) - v) < 10 || results.size() == 1) {
-      fanblades.emplace_back(fanblade);
-      break;
-    }
-  }
-  if (fanblades.empty()) return std::nullopt;
-  PowerRune powerrune(fanblades, r_center, std::nullopt);
-
-  std::optional<PowerRune> P;
-  P.emplace(powerrune);
   return P;
 }
 

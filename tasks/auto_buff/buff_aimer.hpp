@@ -35,6 +35,10 @@ public:
   double angle;      ///
   double t_gap = 0;  ///
 
+  // 调试接口：跳变检测计数 / 当前帧是否判定为切扇叶（禁火）
+  int mistake_count() const { return mistake_count_; }
+  bool switch_fanblade() const { return switch_fanblade_; }
+
 private:
   SmallTarget target_;
   double yaw_offset_;
@@ -44,7 +48,7 @@ private:
   double predict_time_;
 
   int mistake_count_ = 0;
-  bool switch_fanblade_;
+  bool switch_fanblade_ = false;
 
   double last_yaw_ = 0;
   double last_pitch_ = 0;
@@ -56,7 +60,7 @@ private:
 
   bool get_send_angle(
     auto_buff::Target & target, const double predict_time, const double bullet_speed,
-    const bool to_now, double & yaw, double & pitch);
+    const bool to_now, double & yaw, double & pitch, double * horizon = nullptr);
 };
 }  // namespace auto_buff
 #endif  // AUTO_AIM__AIMER_HPP

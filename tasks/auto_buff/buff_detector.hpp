@@ -4,36 +4,36 @@
 #include <yaml-cpp/yaml.h>
 
 #include <deque>
+#include <memory>
 #include <optional>
+#include <vector>
 
 #include "buff_type.hpp"
 #include "tools/img_tools.hpp"
-#include "yolo11_buff.hpp"
 const int LOSE_MAX = 20;  // 丢失的阙值
+
+// SZU RuneModel 在全局命名空间（network_deployment_interface.hpp）
+class RuneModel;
+
 namespace auto_buff
 {
+
 class Buff_Detector
 {
 public:
-  Buff_Detector(const std::string & config);
-
-  std::optional<PowerRune> detect_24(cv::Mat & bgr_img);
+  explicit Buff_Detector(const std::string & config);
+  ~Buff_Detector();
 
   std::optional<PowerRune> detect(cv::Mat & bgr_img);
 
-std::optional<PowerRune> detect_debug(cv::Mat & bgr_img, cv::Point2f v);
-
 private:
-  void handle_img(const cv::Mat & bgr_img, cv::Mat & dilated_img);
-
-  cv::Point2f get_r_center(std::vector<FanBlade> & fanblades, cv::Mat & bgr_img);
-
   void handle_lose();
 
-  YOLO11_BUFF MODE_;
-  Track_status status_;
-  int lose_;  // 丢失的次数
-  double lastlen_;
+  std::unique_ptr<RuneModel> rune_model_;
+  Track_status status_;      // 仅供调试观察，不参与决策
+  int lose_;                 // 丢失的次数
+  bool net_error_logged_ = false;  // 推理异常只报一次，避免刷屏
+  int last_class_id_ = -2;         // 上一次选中的类别，变化时打一行日志
   std::optional<PowerRune> last_powerrune_ = std::nullopt;
 };
 }  // namespace auto_buff

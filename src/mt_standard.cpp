@@ -52,8 +52,8 @@ int main(int argc, char * argv[])
 
   auto_buff::Buff_Detector buff_detector(config_path);
   auto_buff::Solver buff_solver(config_path);
-  auto_buff::SmallTarget buff_small_target;
-  auto_buff::BigTarget buff_big_target;
+  auto_buff::SmallTarget buff_small_target(config_path);
+  auto_buff::BigTarget buff_big_target(config_path);
   auto_buff::Aimer buff_aimer(config_path);
 
   auto_aim::multithread::CommandGener commandgener(shooter, aimer, cboard, plotter);

@@ -3,114 +3,134 @@
 
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "buff_algo/predictor/buff_predictor.hpp"
+#include "buff_algo/tracker/buff_tracker.hpp"
+#include "big_rune/big_rune_tracker.hpp"
 #include "buff_detector.hpp"
 #include "buff_type.hpp"
-#include "tools/extended_kalman_filter.hpp"
-#include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
-#include "tools/plotter.hpp"
-#include "tools/ransac_sine_fitter.hpp"
 
 namespace auto_buff
 {
-class Voter
-{
-public:
-  Voter();
-  void vote(const double angle_last, const double angle_now);
-  int clockwise();
-
-private:
-  int clockwise_;
-};
-
-/// Target 基类
+/// Target 基类（合并 HW：内部使用 BuffTracker + BuffPredictor）
 
 class Target
 {
 public:
   Target();
+  virtual ~Target() = default;
   virtual void get_target(
     const std::optional<PowerRune> & p,
     std::chrono::steady_clock::time_point & timestamp) = 0;  // 纯虚函数
 
   virtual void predict(double dt) = 0;  // 纯虚函数
 
+  // 返回 HW predictor 预测的世界系打击点（aimer 弹道迭代使用）
   Eigen::Vector3d point_buff2world(const Eigen::Vector3d & point_in_buff) const;
 
   bool is_unsolve() const;
 
-  Eigen::VectorXd ekf_x() const;
+  // 兼容旧接口：x[4]=yaw, x[5]=roll, x[6]=roll_velocity（调试/aimer 使用）
+  // virtual：BigTarget 新引擎（big_rune）无 HW EKF，需自行填充等价调试量
+  virtual Eigen::VectorXd ekf_x() const;
 
-  double spd = 0;  //调试用
+  double spd = 0;  // 调试用
+
+  // 只读调试接口：HW 跟踪/预测内部状态
+  buff_algo::BuffState buff_state() const { return state_; }
+  buff_algo::StatusType tracker_status() const
+  {
+    return tracker_ ? tracker_->status() : buff_algo::StatusType::LOST;
+  }
+
+  // 运行时切换小符/大符：转发给 tracker，模式变化时 tracker 内部会 reset
+  // 观测器与状态机，重新从 CONVERGING 收敛（模式不变时调用无副作用）。
+  // SmallTarget/BigTarget 的区别仅在构造时的初始模式，运行期可用本接口互切。
+  // 注意：BigTarget 新引擎不走 HW tracker，本接口对其无效（大符引擎切换见
+  // auto_buff_debug_mpc 的双对象分派）。
+  void set_mode(buff_algo::BuffMode mode)
+  {
+    if (tracker_) tracker_->set_mode(mode);
+  }
+
+  // ===== 调试接口：预测值导出 =====
+  // 最近一次 predict() 得到的打击点（世界系）。aimer 弹道迭代结束后，
+  // 它就是最终参与弹道解算的"飞行时间时域瞄准点"。
+  Eigen::Vector3d aim_point_world() const { return aim_point_world_; }
+
+  // 预测"从状态基准时刻起 dt 秒后"的扇叶 roll（弧度）。
+  // virtual：BigTarget 新引擎以相位模型直接预测（基类实现依赖 HW predictor）。
+  virtual double predict_roll(double dt) const
+  {
+    return predictor_ ? static_cast<double>(predictor_->predict_roll(static_cast<float>(dt)))
+                      : 0.0;
+  }
 
 protected:
-  virtual void init(double nowtime, const PowerRune & p) = 0;  // 纯虚函数
+  // HW 三件套（shared_ptr 以便 target 可拷贝，拷贝为浅拷贝共享状态）
+  std::shared_ptr<buff_algo::BuffTracker> tracker_;
+  std::shared_ptr<buff_algo::BuffPredictor> predictor_;
 
-  virtual void update(double nowtime, const PowerRune & p) = 0;  // 纯虚函数
+  buff_algo::BuffState state_;
+  Eigen::Matrix3d R_gimbal2world_ = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d t_camera2gimbal_ = Eigen::Vector3d::Zero();
+  // cam(前x左y上z)->gimbal 修正旋转，由 Solver 从 config 标定外参算出并下发
+  Eigen::Matrix3d R_fix_ = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d aim_point_world_ = Eigen::Vector3d::Zero();
 
-  Eigen::VectorXd x0_;
-  Eigen::MatrixXd P0_;
-  Eigen::MatrixXd A_;
-  Eigen::MatrixXd Q_;
-  Eigen::MatrixXd H_;
-  Eigen::MatrixXd R_;
-  tools::ExtendedKalmanFilter ekf_;
-  double lasttime_ = 0;
-  Voter voter;  // 逆时针-1 顺时针1
-  bool first_in_;
-  bool unsolvable_;
+  bool unsolvable_ = true;
+  int lost_cn_ = 0;
+  bool first_in_ = true;
 };
 
-/// SmallTarget子类
+/// SmallTarget（小符：SMALL_BUFF 模式）
 
 class SmallTarget : public Target
 {
 public:
-  SmallTarget();
+  SmallTarget();  // 无配置构造（tracker 为空，不工作）
+  explicit SmallTarget(const std::string & config_path);  // 读 hw_buff.config_dir
 
   void get_target(
     const std::optional<PowerRune> & p, std::chrono::steady_clock::time_point & timestamp) override;
 
   void predict(double dt) override;
-
-private:
-  void init(double nowtime, const PowerRune & p) override;
-
-  void update(double nowtime, const PowerRune & p) override;
-
-  Eigen::MatrixXd h_jacobian() const;
-
-  const double SMALL_W = CV_PI / 3;
-  // const double SMALL_W = 0;
 };
 
-/// BigTarget子类
+/// BigTarget（大符：相位运动估计引擎，迁移自 RP-26Rune）
+// 内部不再使用 HW tracker/predictor：由 BigRuneTracker 完成相位连续化、
+// 双候选目标切换与 LM+IRLS 正弦模型拟合，predict 输出世界系打击点。
+// 对外接口与 SmallTarget 完全一致（aimer / 上层程序零改动）。
 
 class BigTarget : public Target
 {
 public:
   BigTarget();
+  explicit BigTarget(const std::string & config_path);
 
   void get_target(
     const std::optional<PowerRune> & p, std::chrono::steady_clock::time_point & timestamp) override;
 
   void predict(double dt) override;
 
+  double predict_roll(double dt) const override;
+  Eigen::VectorXd ekf_x() const override;
+
+  // 新引擎直读接口（调试用；常规链路请走基类接口）
+  const std::shared_ptr<BigRuneTracker> & engine() const { return engine_; }
+
 private:
-  void init(double nowtime, const PowerRune & p) override;
+  // shared_ptr：target 可拷贝（浅共享引擎状态，与基类 tracker_ 风格一致）
+  std::shared_ptr<BigRuneTracker> engine_;
 
-  void update(double nowtime, const PowerRune & p) override;
-
-  Eigen::MatrixXd h_jacobian() const;
-
-  tools::RansacSineFitter spd_fitter_;
-
-  double fit_spd_;
+  // ekf_x() 等价调试量的数据来源（最近观测缓存）
+  Eigen::Vector3d last_r_center_world_ = Eigen::Vector3d::Zero();
+  double last_yaw_ = 0.0;
 };
 
 }  // namespace auto_buff

@@ -2,6 +2,7 @@
 #define BUFF__TYPE_HPP
 
 #include <algorithm>
+#include <array>
 #include <deque>
 #include <eigen3/Eigen/Dense>  // 必须在opencv2/core/eigen.hpp上面
 #include <opencv2/core/eigen.hpp>
@@ -28,8 +29,6 @@ public:
 
   explicit FanBlade() = default;
 
-  // explicit FanBlade(const std::vector<cv::Point2f> & kpt, cv::Point2f keypoints_center, FanBlade_type t);
-
   explicit FanBlade(
     const std::vector<cv::Point2f> & kpt, cv::Point2f keypoints_center, FanBlade_type t);
 
@@ -44,12 +43,33 @@ public:
 
   int light_num;
 
-  Eigen::Vector3d xyz_in_world;  // 单位：m
-  Eigen::Vector3d ypr_in_world;  // 单位：rad
-  Eigen::Vector3d ypd_in_world;  // 球坐标系
+  Eigen::Vector3d xyz_in_world = Eigen::Vector3d::Zero();  // 单位：m
+  Eigen::Vector3d ypr_in_world = Eigen::Vector3d::Zero();  // 单位：rad
+  Eigen::Vector3d ypd_in_world = Eigen::Vector3d::Zero();  // 球坐标系
 
-  Eigen::Vector3d blade_xyz_in_world;  // 单位：m
-  Eigen::Vector3d blade_ypd_in_world;  // 球坐标系, 单位: m
+  Eigen::Vector3d blade_xyz_in_world = Eigen::Vector3d::Zero();  // 单位：m
+  Eigen::Vector3d blade_ypd_in_world = Eigen::Vector3d::Zero();  // 球坐标系, 单位: m
+
+  // ---- HW 合并新增：相机系位姿（前x左y上z）与外参，solver 填充、target 读取 ----
+  Eigen::Matrix4d pose_camera = Eigen::Matrix4d::Identity();   // 相机系 4x4 位姿
+  Eigen::Matrix3d R_gimbal2world = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d t_camera2gimbal = Eigen::Vector3d::Zero();
+
+  // 相机系(前x左y上z) -> 云台系的修正旋转，直接由 config 标定外参算出：
+  //   R_fix = R_camera2gimbal · Tᵀ （T = cv_to_tf 理想置换）
+  // target 做 cam->gimbal 时必须乘它，不能只加平移、忽略旋转
+  Eigen::Matrix3d R_fix = Eigen::Matrix3d::Identity();
+
+  // 符中心(blade_xyz_in_world)的来源：true=用模型输出的 R 点射线求交，
+  // false=射线求交失败后回退到"扇叶中心 + 0.7m"的几何法（调试用）
+  bool r_center_is_measured = false;
+
+  // ---- 双候选支持（大符相位引擎 RP-26Rune 迁移配套）----
+  // 同帧检测到的副候选扇叶（像素四角 top/left/bottom/right，与主候选同类别）。
+  // 大符两叶短暂同亮的切换期出现；detector 收集、solver 推算 3D。
+  std::vector<std::array<cv::Point2f, 4>> extra_blades_pix;
+  // solver 填充：副候选靶心世界坐标（与 extra_blades_pix 一一对应，求交失败的不入列）
+  std::vector<Eigen::Vector3d> extra_armor_centers_in_world;
 
   explicit PowerRune(
     std::vector<FanBlade> & ts, const cv::Point2f r_center,
@@ -67,4 +87,4 @@ private:
   double atan_angle(cv::Point2f v) const;  // [0, 2CV_PI]
 };
 }  // namespace auto_buff
-#endif  // BUFF_TYPE_HPP
+#endif  // BUFF__TYPE_HPP
