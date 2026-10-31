@@ -100,6 +100,15 @@ public:
     const std::optional<PowerRune> & p, std::chrono::steady_clock::time_point & timestamp) override;
 
   void predict(double dt) override;
+
+private:
+  // 丢帧期间预测基准修正：缓存最后一次检测的状态与时刻。
+  // 丢帧时以 set_state(cached, t_d, t_c) 让 predictor 的 state_age_ = t_c - t_d，
+  // predict_position(dt) 的 horizon 就能补上"最后一次检测 -> 当前帧"这段相位。
+  // 不用 tracker 推进过的 state_：TRACKING->TEMP_LOST 首帧不走 predict，天然滞后一帧。
+  buff_algo::BuffState last_detect_state_;
+  double last_detect_ts_ = 0.0;
+  bool has_last_detect_ = false;
 };
 
 /// BigTarget（大符：相位运动估计引擎，迁移自 RP-26Rune）

@@ -38,8 +38,9 @@ public:
   void update(const PowerRune & pr, std::chrono::steady_clock::time_point capture_time);
 
   // 丢帧：无需推进滤波器（其队列按时间窗自动裁剪、间隔过大自动重置），
-  // 这里只维持重置计数。
-  void update_lost();
+  // 这里只维持重置计数，并记录当前帧时间——预测基准从中断的观测帧改锚到当前帧，
+  // 丢帧期间 predict_phase/predict_aim_point 的 dt 才是从"当前帧"起算的全链路时域。
+  void update_lost(std::chrono::steady_clock::time_point capture_time);
 
   // ===== 状态查询 =====
   // 运动方程是否有效（唯一可靠来源：calculate_motion 的返回值）。
@@ -101,6 +102,12 @@ private:
   int lost_cn_ = 0;
   bool has_target_ = false;
   bool unsolvable_ = true;
+
+  // 最近一帧的时间戳（检测帧=观测时刻，丢帧帧=当前帧时刻）。
+  // 丢帧期间 filter 内 tgt.capture_timestamp 停在最后一次被跟踪的帧，
+  // 预测基准必须换成本成员才能覆盖"最后一次检测 -> 当前帧"的相位。
+  // reset() 清零后回退用 tgt.capture_timestamp。
+  big_rune::Time last_frame_time_ = 0;
 };
 
 }  // namespace auto_buff

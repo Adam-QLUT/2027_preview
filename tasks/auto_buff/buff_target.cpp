@@ -142,6 +142,21 @@ void SmallTarget::get_target(
   unsolvable_ = !update_hw(
     p, ts, tracker_, predictor_, state_, R_gimbal2world_, t_camera2gimbal_, R_fix_,
     aim_point_world_, first_in_);
+
+  // ---- 丢帧期间预测基准修正 ----
+  // 检测帧：predictor 基准已是 t_d（age=0），刷新缓存即可。
+  // 丢帧帧：tracker 状态机 TEMP_LOST 下 KF 仍在推进，但首帧有一步滞后，不可作基准；
+  // 直接把最后一次检测的状态以 age = t_c - t_d 重放给 predictor，
+  // 这样后续 predict(dt) 的 horizon = (t_c - t_d) + dt，从 t_d 一路补到"当前帧+飞行"。
+  if (!unsolvable_ && p.has_value()) {
+    last_detect_state_ = state_;
+    last_detect_ts_ = ts;
+    has_last_detect_ = true;
+  } else if (!unsolvable_ && has_last_detect_) {
+    predictor_->set_state(last_detect_state_, last_detect_ts_, ts);
+    const Eigen::Vector3f leaf = predictor_->predict_position(0.0f);
+    aim_point_world_ = R_gimbal2world_ * (R_fix_ * leaf.cast<double>() + t_camera2gimbal_);
+  }
 }
 
 void SmallTarget::predict(double dt)
@@ -178,8 +193,9 @@ void BigTarget::get_target(
 
   if (!p.has_value()) {
     // 丢帧：引擎内部按时间窗自动裁剪、间隔过大自动重置；连续丢 15 帧彻底重建
-    // （与 SmallTarget 的丢帧重置策略一致）
-    engine_->update_lost();
+    // （与 SmallTarget 的丢帧重置策略一致）。
+    // 传入当前帧时间戳，引擎用 last_frame_time_ 修正预测基准（见 big_rune_tracker）。
+    engine_->update_lost(timestamp);
     if (engine_->is_unsolve()) unsolvable_ = true;
     return;
   }
@@ -190,7 +206,7 @@ void BigTarget::get_target(
   // 默认单位阵。这种脏帧不能喂给相位引擎（无 NIS 卡方兜底，会污染拟合窗口），
   // 按丢帧处理。PnP 成功帧的旋转块不可能恰为单位阵，判据安全。
   if (pr.pose_camera.isApprox(Eigen::Matrix4d::Identity())) {
-    engine_->update_lost();
+    engine_->update_lost(timestamp);
     if (engine_->is_unsolve()) unsolvable_ = true;
     return;
   }
