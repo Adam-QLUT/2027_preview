@@ -35,6 +35,10 @@ public:
 
   bool is_unsolve() const;
 
+  // 是否允许开火。默认"有可外推状态"即可；BigTarget 要求相位模型已建立，
+  // 避免 CONVERGING 阶段（预测没有提前量）开火。
+  virtual bool can_fire() const { return !unsolvable_; }
+
   // 兼容旧接口：x[4]=yaw, x[5]=roll, x[6]=roll_velocity（调试/aimer 使用）
   // virtual：BigTarget 新引擎（big_rune）无 HW EKF，需自行填充等价调试量
   virtual Eigen::VectorXd ekf_x() const;
@@ -129,6 +133,7 @@ public:
 
   double predict_roll(double dt) const override;
   Eigen::VectorXd ekf_x() const override;
+  bool can_fire() const override;
 
   // 新引擎直读接口（调试用；常规链路请走基类接口）
   const std::shared_ptr<BigRuneTracker> & engine() const { return engine_; }

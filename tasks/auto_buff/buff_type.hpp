@@ -64,6 +64,10 @@ public:
   // false=射线求交失败后回退到"扇叶中心 + 0.7m"的几何法（调试用）
   bool r_center_is_measured = false;
 
+  // PnP 是否成功：Solver 成功填补 pose/xyz 后置 true，默认 false。
+  // target 用它区分"检测到但解算失败"的脏帧（此时 pose_camera 仍是单位阵、xyz 全 0）。
+  bool pnp_ok = false;
+
   // ---- 双候选支持（大符相位引擎 RP-26Rune 迁移配套）----
   // 同帧检测到的副候选扇叶（像素四角 top/left/bottom/right，与主候选同类别）。
   // 大符两叶短暂同亮的切换期出现；detector 收集、solver 推算 3D。

@@ -204,6 +204,11 @@ void LM_IRLS_BigRunePhaseMotionFilter::fit_motion_model()
 
 void LM_IRLS_BigRunePhaseMotionFilter::fit_linear(const double & omega)
 {
+  // 每次评估新的 ω 都必须清掉上一次的结果；否则本次内层迭代失败时会复用旧
+  // theta/cost，eval_omega 会把"失败"误判成"成功"，污染 LM 外层迭代。
+  m_fit_result_inside.is_valid = false;
+  m_fit_result_inside.cost = std::numeric_limits<double>::infinity();
+
   // 构建设计矩阵 X=[cos(ωt), sin(ωt), t, 1]
   Eigen::MatrixXd X(m_tracked_target_deque.size(), 4);
   for (int i = 0; i < static_cast<int>(m_tracked_target_deque.size()); ++i) {

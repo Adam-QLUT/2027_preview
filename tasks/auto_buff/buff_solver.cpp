@@ -81,6 +81,7 @@ void Solver::solve(std::optional<PowerRune> & ps) const
   Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
   T.block<3, 3>(0, 0) = pose.rotation.toRotationMatrix().cast<double>();
   T.block<3, 1>(0, 3) = pose.translation.cast<double>();
+  if (!T.allFinite()) return;
   p.pose_camera = T;
   p.R_gimbal2world = R_gimbal2world_;
   p.t_camera2gimbal = t_camera2gimbal_;
@@ -144,6 +145,9 @@ void Solver::solve(std::optional<PowerRune> & ps) const
         R_gimbal2world_ * (R_fix * armor_cam + t_camera2gimbal_));
     }
   }
+
+  // 所有字段（位姿、R 心、副候选）都已有效填充，标记本帧可用于跟踪。
+  p.pnp_ok = true;
 }
 
 // 反投影模型给出的 R 字中心像素 -> 与扇叶平面求交 -> 相机系(前x左y上z) 3D 点

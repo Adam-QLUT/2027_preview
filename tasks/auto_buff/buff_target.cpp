@@ -85,6 +85,15 @@ bool update_hw(
   }
 
   const PowerRune & pr = p.value();
+
+  // PnP 失败（无解/异常/NaN）时只有角点，没有有效位姿：pose_camera 仍是单位阵、
+  // world 坐标全 0。按丢帧处理，不能把原点/错误 roll 当观测喂给 KF。
+  if (!pr.pnp_ok) {
+    tracker->update(ts);
+    state = tracker->get_state();
+    return tracker->status() != buff_algo::StatusType::LOST;
+  }
+
   R_g2w = pr.R_gimbal2world;
   t_cg = pr.t_camera2gimbal;
   R_fix = pr.R_fix;
@@ -127,7 +136,11 @@ void SmallTarget::get_target(
   }
   const double ts = std::chrono::duration<double>(timestamp.time_since_epoch()).count();
 
-  if (!p.has_value()) {
+  // PnP 失败帧虽然有 optional，但没有有效位姿，按丢帧处理；
+  // 统一用 detected 驱动 lost 计数与缓存，避免把脏帧状态写进 last_detect_state_。
+  const bool detected = p.has_value() && p.value().pnp_ok;
+
+  if (!detected) {
     lost_cn_++;
     if (lost_cn_ > 15) {
       tracker_->reset();
@@ -148,7 +161,7 @@ void SmallTarget::get_target(
   // 丢帧帧：tracker 状态机 TEMP_LOST 下 KF 仍在推进，但首帧有一步滞后，不可作基准；
   // 直接把最后一次检测的状态以 age = t_c - t_d 重放给 predictor，
   // 这样后续 predict(dt) 的 horizon = (t_c - t_d) + dt，从 t_d 一路补到"当前帧+飞行"。
-  if (!unsolvable_ && p.has_value()) {
+  if (!unsolvable_ && detected) {
     last_detect_state_ = state_;
     last_detect_ts_ = ts;
     has_last_detect_ = true;
@@ -204,8 +217,8 @@ void BigTarget::get_target(
 
   // solver 提前返回时（四点缺失/PnP 失败）不会填充位姿字段，pose_camera 保持
   // 默认单位阵。这种脏帧不能喂给相位引擎（无 NIS 卡方兜底，会污染拟合窗口），
-  // 按丢帧处理。PnP 成功帧的旋转块不可能恰为单位阵，判据安全。
-  if (pr.pose_camera.isApprox(Eigen::Matrix4d::Identity())) {
+  // 按丢帧处理。pnp_ok 由 solver 显式标记，identity 判断作为兜底。
+  if (!pr.pnp_ok || pr.pose_camera.isApprox(Eigen::Matrix4d::Identity())) {
     engine_->update_lost(timestamp);
     if (engine_->is_unsolve()) unsolvable_ = true;
     return;
@@ -238,6 +251,12 @@ void BigTarget::predict(double dt)
 double BigTarget::predict_roll(double dt) const
 {
   return engine_ ? engine_->predict_roll(dt) : 0.0;
+}
+
+bool BigTarget::can_fire() const
+{
+  // 相位模型建立前（CONVERGING 的 100 帧）预测没有提前量，开火必空。
+  return !unsolvable_ && engine_ && engine_->model_ready();
 }
 
 Eigen::VectorXd BigTarget::ekf_x() const

@@ -54,7 +54,8 @@ io::Command Aimer::aim(
   auto future = to_now ? (detect_now_gap + predict_time_) : 0.1 + predict_time_;
   double yaw, pitch;
 
-  if (get_send_angle(target, future, bullet_speed, to_now, yaw, pitch)) {
+  const bool solved = get_send_angle(target, future, bullet_speed, to_now, yaw, pitch);
+  if (solved) {
     command.yaw = yaw;
     command.pitch = -pitch;  //世界坐标系下的pitch向上为负
     if (mistake_count_ > 3) {
@@ -74,13 +75,17 @@ io::Command Aimer::aim(
     last_pitch_ = pitch;
   }
 
-  if (switch_fanblade_) {
+  // 只有解算成功、本帧 control、且目标允许开火时才开火。
+  // 否则 get_send_angle 失败时 control=false，但 switch_fanblade_ 还是上一帧的值，
+  // 计时器一到就会带着 0 角度开火。
+  const bool allow_fire = solved && command.control && target.can_fire();
+  if (switch_fanblade_ || !allow_fire) {
     // 只抑制当帧开火，不再重置 fire_gap 计时器。
     // 原实现这里的 last_fire_t_ = now 会被每一次"扇叶跳变"触发，而跳变频率
     // （实测约 5~12 次/秒）远高于 1/fire_gap_time，导致计时器几乎永远走不完，
     // 实测 800 帧只发出 3~6 发（理论上限约 18 发）。
     command.shoot = false;
-  } else if (!switch_fanblade_ && tools::delta_time(now, last_fire_t_) > fire_gap_time_) {
+  } else if (tools::delta_time(now, last_fire_t_) > fire_gap_time_) {
     command.shoot = true;
     last_fire_t_ = now;
   }
@@ -108,7 +113,8 @@ auto_aim::Plan Aimer::mpc_aim(
   auto future = to_now ? (detect_now_gap + predict_time_) : 0.1 + predict_time_;
   double yaw, pitch, horizon = 0.0;
 
-  if (get_send_angle(target, future, bullet_speed, to_now, yaw, pitch, &horizon)) {
+  const bool solved = get_send_angle(target, future, bullet_speed, to_now, yaw, pitch, &horizon);
+  if (solved) {
     plan.yaw = yaw;
     plan.pitch = -pitch;  //世界坐标系下的pitch向上为负
     if (mistake_count_ > 3) {
@@ -166,10 +172,12 @@ auto_aim::Plan Aimer::mpc_aim(
     }
   }
 
-  if (switch_fanblade_) {
-    // 同 aim()：只抑制当帧，不重置 fire_gap 计时器
+  // 同 aim()：解算失败 / 本帧不控制 / 目标未 ready（大符模型未建立）时都不开火。
+  const bool allow_fire = solved && plan.control && target.can_fire();
+  if (switch_fanblade_ || !allow_fire) {
+    // 只抑制当帧，不重置 fire_gap 计时器
     plan.fire = false;
-  } else if (!switch_fanblade_ && tools::delta_time(now, last_fire_t_) > fire_gap_time_) {
+  } else if (tools::delta_time(now, last_fire_t_) > fire_gap_time_) {
     plan.fire = true;
     last_fire_t_ = now;
   }
