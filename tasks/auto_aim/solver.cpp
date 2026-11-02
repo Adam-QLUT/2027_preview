@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <stdexcept>
 #include <vector>
 
 #include "tools/logger.hpp"
@@ -77,18 +76,6 @@ Solver::Solver(const std::string & config_path) : R_gimbal2world_(Eigen::Matrix3
   Eigen::Matrix<double, 1, 5> distort_coeffs(distort_coeffs_data.data());
   cv::eigen2cv(camera_matrix, camera_matrix_);
   cv::eigen2cv(distort_coeffs, distort_coeffs_);
-  if (yaml["uv_sigma_center_ratio"]) {
-    uv_sigma_center_ratio_ = yaml["uv_sigma_center_ratio"].as<double>();
-  }
-  if (yaml["uv_sigma_length_ratio"]) {
-    uv_sigma_length_ratio_ = yaml["uv_sigma_length_ratio"].as<double>();
-  }
-  if (yaml["uv_sigma_angle"]) uv_sigma_angle_ = yaml["uv_sigma_angle"].as<double>();
-  if (!std::isfinite(uv_sigma_center_ratio_) || !std::isfinite(uv_sigma_length_ratio_) ||
-      !std::isfinite(uv_sigma_angle_) || uv_sigma_center_ratio_ <= 0 ||
-      uv_sigma_length_ratio_ <= 0 || uv_sigma_angle_ <= 0) {
-    throw std::invalid_argument("UV measurement noise must be positive");
-  }
 }
 
 Eigen::Matrix3d Solver::R_gimbal2world() const { return R_gimbal2world_; }
@@ -173,69 +160,6 @@ motion_model::Camera Solver::camera() const
 }
 
 std::vector<cv::Point2f> Solver::reproject_armor(
-  const Eigen::Isometry3d & pose, ArmorType type) const
-{
-  std::array<Eigen::Vector2d, 4> projected;
-  if (!camera().project(pose, type, projected)) return {};
-  std::vector<cv::Point2f> pixels;
-  for (const auto & point : projected) pixels.emplace_back(point.x(), point.y());
-  return pixels;
-}
-
-Eigen::VectorXd Solver::armor_uv_observation(const Armor & armor) const
-{
-  std::array<Eigen::Vector2d, 4> pixels;
-  for (int i = 0; i < 4; ++i) pixels[i] << armor.points[i].x, armor.points[i].y;
-  return motion_model::light_observation(pixels);
-}
-
-Eigen::MatrixXd Solver::armor_uv_noise(const Armor & armor) const
-{
-  Eigen::VectorXd diagonal(motion_model::UV_DIM);
-  for (int light = 0; light < 2; ++light) {
-    const double length = cv::norm(armor.points[light] - armor.points[3 - light]);
-    const double sigma_center = std::max(0.5, uv_sigma_center_ratio_ * length);
-    const double sigma_length = std::max(1.0, uv_sigma_length_ratio_ * length);
-    diagonal.segment<4>(light * 4) << tools::square(uv_sigma_angle_) / 2.0,
-      tools::square(sigma_center) / 2.0, tools::square(sigma_center) / 2.0,
-      tools::square(sigma_length) / 2.0;
-  }
-  return diagonal.asDiagonal();
-}
-
-bool Solver::armor_uv_prediction(
-  const Eigen::VectorXd & x, int id, int armor_num, ArmorType type, ArmorName name,
-  Eigen::VectorXd & observation, Eigen::MatrixXd * jacobian) const
-{
-  if (!jacobian) {
-    std::array<Eigen::Vector2d, 4> projected;
-    if (!camera().project(motion_model::armor_pose(x.data(), id, armor_num, name), type, projected)) {
-      return false;
-    }
-    observation = motion_model::light_observation(projected);
-    return observation.allFinite();
-  }
-  using Jet = ceres::Jet<double, motion_model::STATE_DIM>;
-  std::array<Jet, motion_model::STATE_DIM> state;
-  for (int i = 0; i < motion_model::STATE_DIM; ++i) {
-    state[i] = Jet(x[i]);
-    state[i].v[i] = 1.0;
-  }
-  std::array<Eigen::Matrix<Jet, 2, 1>, 4> projected;
-  if (!camera().project(motion_model::armor_pose(state.data(), id, armor_num, name), type, projected)) {
-    return false;
-  }
-  const auto uv = motion_model::light_observation(projected);
-  observation.resize(motion_model::UV_DIM);
-  jacobian->resize(motion_model::UV_DIM, motion_model::STATE_DIM);
-  for (int i = 0; i < motion_model::UV_DIM; ++i) {
-    observation[i] = uv[i].a;
-    jacobian->row(i) = uv[i].v.transpose();
-  }
-  return observation.allFinite() && jacobian->allFinite();
-}
-
-std::vector<cv::Point2f> Solver::reproject_armor(
   const Eigen::Vector3d & xyz_in_world, double yaw, ArmorType type, ArmorName name) const
 {
   auto sin_yaw = std::sin(yaw);
@@ -272,73 +196,6 @@ std::vector<cv::Point2f> Solver::reproject_armor(
   const auto & object_points = (type == ArmorType::big) ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
   cv::projectPoints(object_points, rvec, tvec, camera_matrix_, distort_coeffs_, image_points);
   return image_points;
-}
-
-double Solver::oupost_reprojection_error(Armor armor, const double & pitch)
-{
-  // solve
-  const auto & object_points =
-    (armor.type == ArmorType::big) ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
-
-  cv::Vec3d rvec, tvec;
-  cv::solvePnP(
-    object_points, armor.points, camera_matrix_, distort_coeffs_, rvec, tvec, false,
-    cv::SOLVEPNP_IPPE);
-
-  Eigen::Vector3d xyz_in_camera;
-  cv::cv2eigen(tvec, xyz_in_camera);
-  armor.xyz_in_gimbal = R_camera2gimbal_ * xyz_in_camera + t_camera2gimbal_;
-  armor.xyz_in_world = R_gimbal2world_ * armor.xyz_in_gimbal;
-
-  cv::Mat rmat;
-  cv::Rodrigues(rvec, rmat);
-  Eigen::Matrix3d R_armor2camera;
-  cv::cv2eigen(rmat, R_armor2camera);
-  Eigen::Matrix3d R_armor2gimbal = R_camera2gimbal_ * R_armor2camera;
-  Eigen::Matrix3d R_armor2world = R_gimbal2world_ * R_armor2gimbal;
-  armor.ypr_in_gimbal = tools::eulers(R_armor2gimbal, 2, 1, 0);
-  armor.ypr_in_world = tools::eulers(R_armor2world, 2, 1, 0);
-
-  armor.ypd_in_world = tools::xyz2ypd(armor.xyz_in_world);
-
-  auto yaw = armor.ypr_in_world[0];
-  auto xyz_in_world = armor.xyz_in_world;
-
-  auto sin_yaw = std::sin(yaw);
-  auto cos_yaw = std::cos(yaw);
-
-  auto sin_pitch = std::sin(pitch);
-  auto cos_pitch = std::cos(pitch);
-
-  // clang-format off
-  const Eigen::Matrix3d _R_armor2world {
-    {cos_yaw * cos_pitch, -sin_yaw, cos_yaw * sin_pitch},
-    {sin_yaw * cos_pitch,  cos_yaw, sin_yaw * sin_pitch},
-    {         -sin_pitch,        0,           cos_pitch}
-  };
-  // clang-format on
-
-  // get R_armor2camera t_armor2camera
-  const Eigen::Vector3d & t_armor2world = xyz_in_world;
-  Eigen::Matrix3d _R_armor2camera =
-    R_camera2gimbal_.transpose() * R_gimbal2world_.transpose() * _R_armor2world;
-  Eigen::Vector3d t_armor2camera =
-    R_camera2gimbal_.transpose() * (R_gimbal2world_.transpose() * t_armor2world - t_camera2gimbal_);
-
-  // get rvec tvec
-  cv::Vec3d _rvec;
-  cv::Mat R_armor2camera_cv;
-  cv::eigen2cv(_R_armor2camera, R_armor2camera_cv);
-  cv::Rodrigues(R_armor2camera_cv, _rvec);
-  cv::Vec3d _tvec(t_armor2camera[0], t_armor2camera[1], t_armor2camera[2]);
-
-  // reproject
-  std::vector<cv::Point2f> image_points;
-  cv::projectPoints(object_points, _rvec, _tvec, camera_matrix_, distort_coeffs_, image_points);
-
-  auto error = 0.0;
-  for (int i = 0; i < 4; i++) error += cv::norm(armor.points[i] - image_points[i]);
-  return error;
 }
 
 void Solver::optimize_pose(Armor & armor) const

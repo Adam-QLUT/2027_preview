@@ -36,8 +36,7 @@ public:
     const Eigen::VectorXd & z, const Eigen::MatrixXd & H, const Eigen::MatrixXd & R,
     std::function<Eigen::VectorXd(const Eigen::VectorXd &)> h,
     std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> z_subtract =
-      [](const Eigen::VectorXd & a, const Eigen::VectorXd & b) { return a - b; },
-    double nis_threshold = 0.711);
+      [](const Eigen::VectorXd & a, const Eigen::VectorXd & b) { return a - b; });
 
   std::map<std::string, double> data;  //卡方检验数据
   std::deque<int> recent_nis_failures{0};

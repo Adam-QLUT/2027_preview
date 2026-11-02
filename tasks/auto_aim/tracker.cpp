@@ -27,14 +27,6 @@ Tracker::Tracker(const std::string & config_path, Solver & solver)
   normal_temp_lost_count_ = max_temp_lost_count_;
   v1_ = yaml["v1"].IsDefined() ? yaml["v1"].as<double>() : 100.0;
   v2_ = yaml["v2"].IsDefined() ? yaml["v2"].as<double>() : 400.0;
-  q_pitch_ = yaml["car_pitch_process_noise"] ? yaml["car_pitch_process_noise"].as<double>() : 1e-4;
-  q_roll_ = yaml["car_roll_process_noise"] ? yaml["car_roll_process_noise"].as<double>() : 1e-4;
-  if (!std::isfinite(q_pitch_) || q_pitch_ < 0) {
-    throw std::invalid_argument("Car pitch process noise must be finite and nonnegative");
-  }
-  if (!std::isfinite(q_roll_) || q_roll_ < 0) {
-    throw std::invalid_argument("Car roll process noise must be finite and nonnegative");
-  }
 }
 
 std::string Tracker::state() const { return state_; }
@@ -52,13 +44,6 @@ std::list<Target> Tracker::track(
   }
   // 过滤掉非我方装甲板
   armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
-
-  // 过滤前哨站顶部装甲板
-  // armors.remove_if([this](const auto_aim::Armor & a) {
-  //   return a.name == ArmorName::outpost &&
-  //          solver_.oupost_reprojection_error(a, 27.5 * CV_PI / 180.0) <
-  //            solver_.oupost_reprojection_error(a, -15 * CV_PI / 180.0);
-  // });
 
   // 优先选择靠近图像中心的装甲板
   armors.sort([](const Armor & a, const Armor & b) {
@@ -254,17 +239,17 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
   if (armor.name == ArmorName::outpost) {
     // l/h are the two unknown armor height offsets relative to the first observed armor.
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 81, 0.4, 100, 0, 4e-2, 4e-2}};
-    target_ = Target(armor, t, 0.2765, 3, P0_dig, v1_, v2_, q_pitch_, q_roll_);
+    target_ = Target(armor, t, 0.2765, 3, P0_dig, v1_, v2_);
   }
   //基地
   else if (armor.name == ArmorName::base) {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}};
-    target_ = Target(armor, t, 0.3205, 3, P0_dig, v1_, v2_, q_pitch_, q_roll_);
+    target_ = Target(armor, t, 0.3205, 3, P0_dig, v1_, v2_);
   }
 
   else {
     Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
-    target_ = Target(armor, t, 0.2, 4, P0_dig, v1_, v2_, q_pitch_, q_roll_);
+    target_ = Target(armor, t, 0.2, 4, P0_dig, v1_, v2_);
   }
 
   return true;
@@ -294,7 +279,7 @@ bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock
 
     if (!solver_.solve(armor)) continue;
 
-    target_.update(armor, solver_);
+    target_.update(armor);
     solved_count++;
   }
 

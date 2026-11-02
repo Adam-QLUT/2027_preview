@@ -9,10 +9,7 @@
 
 namespace auto_aim::motion_model
 {
-constexpr int STATE_DIM = 13;
-constexpr int CAR_PITCH = 11;
-constexpr int CAR_ROLL = 12;
-constexpr int UV_DIM = 8;
+// Geometry used only by the PnP/Ceres pose solver; no tracking observation model.
 constexpr double ARMOR_PITCH = 15.0 * CV_PI / 180.0;
 
 inline double armor_pitch(ArmorName name)
@@ -32,32 +29,6 @@ Eigen::Matrix<T, 3, 3> rotation(const T & yaw, const T & pitch, const T & roll =
     sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
     -sp, cp * sr, cp * cr;
   return result;
-}
-
-template <typename T>
-Eigen::Transform<T, 3, Eigen::Isometry> armor_pose(const T * x, int id, int armor_num,
-                                                   ArmorName name)
-{
-  using std::cos;
-  using std::sin;
-  const bool alternate = armor_num == 4 && (id & 1);
-  const T radius = alternate ? x[8] + x[9] : x[8];
-  const T phase = T(id * 2.0 * CV_PI / armor_num);
-  T height = alternate ? x[10] : T(0);
-  if (name == ArmorName::outpost && armor_num == 3) {
-    if (id == 1) height = x[9];
-    if (id == 2) height = x[10];
-  }
-  const bool fixed_tilt = name == ArmorName::outpost || name == ArmorName::base;
-  const T pitch = fixed_tilt ? T(0) : x[CAR_PITCH];
-  const T roll = fixed_tilt ? T(0) : x[CAR_ROLL];
-  const Eigen::Matrix<T, 3, 3> car_rotation = rotation(x[6], pitch, roll);
-  auto pose = Eigen::Transform<T, 3, Eigen::Isometry>::Identity();
-  pose.translation() =
-    Eigen::Matrix<T, 3, 1>(x[0], x[2], x[4]) +
-    car_rotation * Eigen::Matrix<T, 3, 1>(-radius * cos(phase), -radius * sin(phase), height);
-  pose.linear() = car_rotation * rotation(phase, T(armor_pitch(name)));
-  return pose;
 }
 
 inline std::array<Eigen::Vector3d, 4> object_points(ArmorType type)
@@ -100,22 +71,6 @@ struct Camera
   }
 };
 
-template <typename T>
-Eigen::Matrix<T, UV_DIM, 1> light_observation(const std::array<Eigen::Matrix<T, 2, 1>, 4> & pixels)
-{
-  using std::atan2;
-  using std::sqrt;
-  Eigen::Matrix<T, UV_DIM, 1> observation;
-  for (int light = 0; light < 2; ++light) {
-    const auto & top = pixels[light];
-    const auto & bottom = pixels[3 - light];
-    const Eigen::Matrix<T, 2, 1> delta = top - bottom;
-    const Eigen::Matrix<T, 2, 1> center = (top + bottom) / T(2);
-    observation.template segment<4>(light * 4) << atan2(delta.x(), delta.y()), center.x(),
-      center.y(), sqrt(delta.squaredNorm());
-  }
-  return observation;
-}
 }  // namespace auto_aim::motion_model
 
 #endif

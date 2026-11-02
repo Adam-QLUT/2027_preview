@@ -66,11 +66,6 @@ target_link_libraries(split_video ${OpenCV_LIBS} fmt::fmt tools)
 
 ##################tests##################
 add_executable(auto_aim_test tests/auto_aim_test.cpp)
-add_executable(uv_filter_test tests/uv_filter_test.cpp)
-target_link_libraries(uv_filter_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
-enable_testing()
-add_test(NAME uv_filter_test COMMAND uv_filter_test "${PROJECT_SOURCE_DIR}/tests/uv_filter.yaml")
-set_tests_properties(uv_filter_test PROPERTIES WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 add_executable(auto_buff_test tests/auto_buff_test.cpp)
 add_executable(camera_detect_test tests/camera_detect_test.cpp)
 add_executable(camera_test tests/camera_test.cpp)
