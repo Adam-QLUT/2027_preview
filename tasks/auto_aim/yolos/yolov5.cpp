@@ -66,6 +66,74 @@ YOLOV5::YOLOV5(const std::string & config_path, bool debug)
   compiled_model_ = core_.compile_model(
     model, device_, ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
   infer_request_ = compiled_model_.create_infer_request();
+  for (auto & slot : async_slots_) slot.request = compiled_model_.create_infer_request();
+}
+
+std::optional<YOLOV5::AsyncResult> YOLOV5::detect_async(
+  const cv::Mat & raw_img, std::chrono::steady_clock::time_point timestamp, int frame_count)
+{
+  if (raw_img.empty()) {
+    tools::logger()->warn("Empty img!, camera drop!");
+    return std::nullopt;
+  }
+
+  cv::Mat bgr_img;
+  if (use_roi_) {
+    if (roi_.width == -1) roi_.width = raw_img.cols;
+    if (roi_.height == -1) roi_.height = raw_img.rows;
+    bgr_img = raw_img(roi_);
+  } else {
+    bgr_img = raw_img;
+  }
+
+  auto & submit = async_slots_[async_submit_slot_];
+  const auto x_scale = 640.0 / bgr_img.rows;
+  const auto y_scale = 640.0 / bgr_img.cols;
+  submit.scale = std::min(x_scale, y_scale);
+  const auto h = std::min(640, static_cast<int>(std::round(bgr_img.rows * submit.scale)));
+  const auto w = std::min(640, static_cast<int>(std::round(bgr_img.cols * submit.scale)));
+  submit.pad_x = (640 - w) / 2;
+  submit.pad_y = (640 - h) / 2;
+  submit.timestamp = timestamp;
+  submit.frame_count = frame_count;
+
+  // Both buffers must outlive start_async(). The camera is free to reuse raw_img
+  // immediately after this function returns.
+  raw_img.copyTo(submit.image);
+  submit.input.create(640, 640, CV_8UC3);
+  submit.input.setTo(cv::Scalar(124, 124, 124));
+  const auto input_roi = cv::Rect(submit.pad_x, submit.pad_y, w, h);
+  cv::resize(bgr_img, submit.input(input_roi), {w, h});
+  ov::Tensor input_tensor(ov::element::u8, {1, 640, 640, 3}, submit.input.data);
+  submit.request.set_input_tensor(input_tensor);
+  submit.request.start_async();
+  submit.running = true;
+
+  const auto completed_slot = async_pending_slot_;
+  async_pending_slot_ = async_submit_slot_;
+  async_submit_slot_ = 1 - async_submit_slot_;
+
+  // The first call only primes the pipeline.
+  if (!completed_slot) return std::nullopt;
+
+  auto & completed = async_slots_[*completed_slot];
+  completed.request.wait();
+  completed.running = false;
+
+  auto output_tensor = completed.request.get_output_tensor();
+  const auto output_shape = output_tensor.get_shape();
+  if (output_shape.size() != 3 || output_shape[0] != 1 || output_shape[1] != 25200 ||
+      output_shape[2] != 22) {
+    throw std::runtime_error("Unexpected YOLOv5 async output shape");
+  }
+
+  inference_image_size_ = use_roi_ ? roi_.size() : completed.image.size();
+  pad_x_ = completed.pad_x;
+  pad_y_ = completed.pad_y;
+  cv::Mat output(output_shape[1], output_shape[2], CV_32F, output_tensor.data());
+  auto armors = parse(completed.scale, output, completed.image, completed.frame_count);
+  return AsyncResult{
+    std::move(armors), completed.timestamp, completed.image, completed.frame_count};
 }
 
 std::list<Armor> YOLOV5::detect(const cv::Mat & raw_img, int frame_count)

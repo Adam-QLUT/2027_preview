@@ -72,14 +72,20 @@ int main(int argc, char * argv[])
     solver.set_R_gimbal2world({w, x, y, z});
 
     auto yolo_start = std::chrono::steady_clock::now();
-    auto armors = yolo.detect(img, frame_count);
+    auto detection = yolo.detect_async(img, timestamp, frame_count);
+    if (!detection) continue;
+
+    const auto detection_timestamp = detection->timestamp;
+    const auto detection_frame_count = detection->frame_count;
+    img = std::move(detection->image);
+    auto armors = std::move(detection->armors);
 
     auto tracker_start = std::chrono::steady_clock::now();
-    auto targets = tracker.track(armors, timestamp);
+    auto targets = tracker.track(armors, detection_timestamp);
 
     /// 传统流水线：Aimer
     auto aimer_start = std::chrono::steady_clock::now();
-    auto command = aimer.aim(targets, timestamp, kBulletSpeed, false);
+    auto command = aimer.aim(targets, detection_timestamp, kBulletSpeed, false);
 
     if (
       !targets.empty() && aimer.debug_aim_point.valid &&
@@ -99,7 +105,8 @@ int main(int argc, char * argv[])
 
     auto finish = std::chrono::steady_clock::now();
     tools::logger()->info(
-      "[{}] yolo: {:.1f}ms, tracker: {:.1f}ms, aimer: {:.1f}ms, planner: {:.1f}ms", frame_count,
+      "[{}] yolo: {:.1f}ms, tracker: {:.1f}ms, aimer: {:.1f}ms, planner: {:.1f}ms",
+      detection_frame_count,
       tools::delta_time(tracker_start, yolo_start) * 1e3,
       tools::delta_time(aimer_start, tracker_start) * 1e3,
       tools::delta_time(planner_start, aimer_start) * 1e3,

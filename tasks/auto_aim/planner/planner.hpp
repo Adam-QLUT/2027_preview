@@ -12,7 +12,7 @@
 
 namespace auto_aim
 {
-constexpr double DT = 0.01;
+constexpr double DT = 0.007;
 constexpr int HALF_HORIZON = 50;
 constexpr int HORIZON = HALF_HORIZON * 2;
 

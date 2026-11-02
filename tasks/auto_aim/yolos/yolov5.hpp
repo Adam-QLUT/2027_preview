@@ -2,8 +2,11 @@
 #define AUTO_AIM__YOLOV5_HPP
 
 #include <list>
+#include <array>
+#include <chrono>
 #include <opencv2/opencv.hpp>
 #include <openvino/openvino.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,9 +19,21 @@ namespace auto_aim
 class YOLOV5 : public YOLOBase
 {
 public:
+  struct AsyncResult
+  {
+    std::list<Armor> armors;
+    std::chrono::steady_clock::time_point timestamp;
+    cv::Mat image;
+    int frame_count;
+  };
+
   YOLOV5(const std::string & config_path, bool debug);
 
   std::list<Armor> detect(const cv::Mat & bgr_img, int frame_count) override;
+
+  std::optional<AsyncResult> detect_async(
+    const cv::Mat & bgr_img, std::chrono::steady_clock::time_point timestamp,
+    int frame_count = -1);
 
   std::list<Armor> postprocess(
     double scale, cv::Mat & output, const cv::Mat & bgr_img, int frame_count) override;
@@ -37,6 +52,22 @@ private:
   ov::Core core_;
   ov::CompiledModel compiled_model_;
   ov::InferRequest infer_request_;
+
+  struct AsyncSlot
+  {
+    ov::InferRequest request;
+    cv::Mat input;
+    cv::Mat image;
+    std::chrono::steady_clock::time_point timestamp;
+    double scale = 1.0;
+    int pad_x = 0;
+    int pad_y = 0;
+    int frame_count = -1;
+    bool running = false;
+  };
+  std::array<AsyncSlot, 2> async_slots_;
+  std::size_t async_submit_slot_ = 0;
+  std::optional<std::size_t> async_pending_slot_;
 
   cv::Rect roi_;
   cv::Point2f offset_;

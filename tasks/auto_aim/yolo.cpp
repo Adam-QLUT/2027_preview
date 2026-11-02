@@ -35,6 +35,20 @@ std::list<Armor> YOLO::detect(const cv::Mat & img, int frame_count)
   return yolo_->detect(img, frame_count);
 }
 
+std::optional<YOLO::AsyncResult> YOLO::detect_async(
+  const cv::Mat & img, std::chrono::steady_clock::time_point timestamp, int frame_count)
+{
+  auto * yolov5 = dynamic_cast<YOLOV5 *>(yolo_.get());
+  if (yolov5 == nullptr) {
+    throw std::logic_error("Asynchronous inference is only implemented for YOLOv5");
+  }
+
+  auto result = yolov5->detect_async(img, timestamp, frame_count);
+  if (!result) return std::nullopt;
+  return AsyncResult{
+    std::move(result->armors), result->timestamp, std::move(result->image), result->frame_count};
+}
+
 std::list<Armor> YOLO::postprocess(
   double scale, cv::Mat & output, const cv::Mat & bgr_img, int frame_count)
 {
