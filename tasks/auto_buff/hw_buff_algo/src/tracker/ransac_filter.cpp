@@ -39,6 +39,9 @@ void RansacSineFitter::add_data(double t, double v) {
     double t_rel = t - t0_;
     if (fit_data_.size() > 0 && (t_rel - fit_data_.back().first > 5)) {
         fit_data_.clear();
+        // 数据清空后旧模型必须一起失效，否则 ransac_ready() 会拿断档前的
+        // best_result_ 继续进入 TRACKING。
+        best_result_ = Result{};
         t0_ = t;
         t_rel = 0.0;
     }

@@ -77,45 +77,47 @@ int main(int argc, char * argv[])
 
     nlohmann::json data;
 
-    // buff原始观测数据
+    // buff原始观测数据 + 检测点绘制：只依赖“本帧有检测”
     if (power_runes.has_value()) {
-      const auto & p = power_runes.value();
+      auto & p = power_runes.value();
       data["buff_R_yaw"] = p.ypd_in_world[0];
       data["buff_R_pitch"] = p.ypd_in_world[1];
       data["buff_R_dis"] = p.ypd_in_world[2];
       data["buff_yaw"] = p.ypr_in_world[0] * 57.3;
       data["buff_pitch"] = p.ypr_in_world[1] * 57.3;
       data["buff_roll"] = p.ypr_in_world[2] * 57.3;
-    }
-
-    if (!target.is_unsolve()) {
-      auto & p = power_runes.value();
 
       // 显示
       for (int i = 0; i < 4; i++) tools::draw_point(img, p.target().points[i]);
       tools::draw_point(img, p.target().center, {0, 0, 255}, 3);
       tools::draw_point(img, p.r_center, {0, 0, 255}, 3);
 
-      // 当前帧target更新后buff
-      auto Rxyz_in_world_now = target.point_buff2world(Eigen::Vector3d(0.0, 0.0, 0.0));
-      auto image_points =
-        solver.reproject_buff(Rxyz_in_world_now, target.ekf_x()[4], target.ekf_x()[5]);
-      tools::draw_points(
-        img, std::vector<cv::Point2f>(image_points.begin(), image_points.begin() + 4), {0, 255, 0});
-      tools::draw_points(
-        img, std::vector<cv::Point2f>(image_points.begin() + 4, image_points.end()), {0, 255, 0});
+      // 重投影对比：需要跟踪状态；丢帧时没有当前角点，整段不画
+      if (!target.is_unsolve()) {
+        // 当前帧target更新后buff
+        auto Rxyz_in_world_now = target.point_buff2world(Eigen::Vector3d(0.0, 0.0, 0.0));
+        auto image_points =
+          solver.reproject_buff(Rxyz_in_world_now, target.ekf_x()[4], target.ekf_x()[5]);
+        tools::draw_points(
+          img, std::vector<cv::Point2f>(image_points.begin(), image_points.begin() + 4),
+          {0, 255, 0});
+        tools::draw_points(
+          img, std::vector<cv::Point2f>(image_points.begin() + 4, image_points.end()), {0, 255, 0});
 
-      // buff瞄准位置(预测)
-      double dangle = target.ekf_x()[5] - target_copy.ekf_x()[5];
-      auto Rxyz_in_world_pre = target.point_buff2world(Eigen::Vector3d(0.0, 0.0, 0.0));
-      image_points =
-        solver.reproject_buff(Rxyz_in_world_pre, target_copy.ekf_x()[4], target_copy.ekf_x()[5]);
-      tools::draw_points(
-        img, std::vector<cv::Point2f>(image_points.begin(), image_points.begin() + 4), {255, 0, 0});
-      tools::draw_points(
-        img, std::vector<cv::Point2f>(image_points.begin() + 4, image_points.end()), {255, 0, 0});
+        // buff瞄准位置(预测)
+        auto Rxyz_in_world_pre = target.point_buff2world(Eigen::Vector3d(0.0, 0.0, 0.0));
+        image_points =
+          solver.reproject_buff(Rxyz_in_world_pre, target_copy.ekf_x()[4], target_copy.ekf_x()[5]);
+        tools::draw_points(
+          img, std::vector<cv::Point2f>(image_points.begin(), image_points.begin() + 4),
+          {255, 0, 0});
+        tools::draw_points(
+          img, std::vector<cv::Point2f>(image_points.begin() + 4, image_points.end()), {255, 0, 0});
+      }
+    }
 
-      // 观测器内部数据
+    // 观测器内部数据：只依赖“有跟踪状态”，丢帧期间曲线照常输出
+    if (!target.is_unsolve()) {
       Eigen::VectorXd x = target.ekf_x();
       data["R_yaw"] = x[0];
       data["R_V_yaw"] = x[1];

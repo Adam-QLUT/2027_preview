@@ -1,5 +1,6 @@
 #include "buff_detector.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <opencv2/core.hpp>
 
@@ -10,8 +11,7 @@ namespace auto_buff
 {
 Buff_Detector::Buff_Detector(const std::string & config) : status_(LOSE), lose_(0)
 {
-  auto yaml = YAML::LoadFile(config);
-  const std::string model_path = yaml["rune_model"]["path"].as<std::string>();
+  std::string model_path;
   // SZU RuneModel：OpenVINO 后端，Intel 集显用 GPU device
   //
   // 必须用 sync：async 模式下 netProcess(第 N 帧) 返回的是第 N-1 帧的推理结果
@@ -19,6 +19,8 @@ Buff_Detector::Buff_Detector(const std::string & config) : status_(LOSE), lose_(
   //  调用方需要自行按 pipeline_delay 对齐）。而本模块用当前帧的 IMU 与时间戳做 PnP/预测，
   // 不补偿就会引入整整 1 帧的系统性滞后；SZU 库本身也提示"标准情况下打符应该使用 sync 推理"。
   try {
+    auto yaml = YAML::LoadFile(config);
+    model_path = yaml["rune_model"]["path"].as<std::string>();
     rune_model_ = std::make_unique<RuneModel>(model_path, "sync", "openvino", "GPU");
   } catch (const std::exception & e) {
     // 模型缺失 / device 不可用 / 形状不匹配等：不要让整个程序 terminate
@@ -65,11 +67,18 @@ std::optional<PowerRune> Buff_Detector::detect(cv::Mat & bgr_img)
     return std::nullopt;
   }
 
-  // 取置信度最高的一个结果（SZU 后处理已按 score 降序，results[0] 即最高分）
-  const auto & r = results[0];
+  // 只接受已激活的扇叶（class 1/2）。class 0 是"未激活"，模型同样会以高置信度输出；
+  // 拿它做 PnP/跟踪会瞄准一片没亮的叶（相邻叶中心相距约 0.82 m）。
+  // SZU 后处理已按 score 降序，find_if 得到的即置信度最高的激活叶。
+  const auto activated = std::find_if(
+    results.begin(), results.end(), [](const NetRuneResult & res) { return res.class_id > 0; });
+  if (activated == results.end()) {
+    handle_lose();
+    return std::nullopt;
+  }
+  const auto & r = *activated;
 
-  // 类别变化时打一行日志：0=未激活, 1=小符已激活, 2=大符已激活。
-  // 用于确认模型确实在报"小符已激活"，以及 results[0] 取到的不是"未激活"的扇叶。
+  // 类别变化时打一行日志：1=小符已激活, 2=大符已激活（class 0 已在上方过滤）。
   if (r.class_id != last_class_id_) {
     last_class_id_ = r.class_id;
     tools::logger()->info(

@@ -35,6 +35,10 @@ public:
 
   bool is_unsolve() const;
 
+  // 是否允许开火。默认"有可外推状态"即可；BigTarget 要求相位模型已建立，
+  // 避免 CONVERGING 阶段（预测没有提前量）开火。
+  virtual bool can_fire() const { return !unsolvable_; }
+
   // 兼容旧接口：x[4]=yaw, x[5]=roll, x[6]=roll_velocity（调试/aimer 使用）
   // virtual：BigTarget 新引擎（big_rune）无 HW EKF，需自行填充等价调试量
   virtual Eigen::VectorXd ekf_x() const;
@@ -100,6 +104,15 @@ public:
     const std::optional<PowerRune> & p, std::chrono::steady_clock::time_point & timestamp) override;
 
   void predict(double dt) override;
+
+private:
+  // 丢帧期间预测基准修正：缓存最后一次检测的状态与时刻。
+  // 丢帧时以 set_state(cached, t_d, t_c) 让 predictor 的 state_age_ = t_c - t_d，
+  // predict_position(dt) 的 horizon 就能补上"最后一次检测 -> 当前帧"这段相位。
+  // 不用 tracker 推进过的 state_：TRACKING->TEMP_LOST 首帧不走 predict，天然滞后一帧。
+  buff_algo::BuffState last_detect_state_;
+  double last_detect_ts_ = 0.0;
+  bool has_last_detect_ = false;
 };
 
 /// BigTarget（大符：相位运动估计引擎，迁移自 RP-26Rune）
@@ -120,6 +133,7 @@ public:
 
   double predict_roll(double dt) const override;
   Eigen::VectorXd ekf_x() const override;
+  bool can_fire() const override;
 
   // 新引擎直读接口（调试用；常规链路请走基类接口）
   const std::shared_ptr<BigRuneTracker> & engine() const { return engine_; }

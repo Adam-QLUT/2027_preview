@@ -20,7 +20,21 @@ std::vector<Pose3f> BuffPnPSolver::solve_pnp(
     std::vector<std::array<cv::Mat, 2>> rvecs;
     std::vector<std::array<cv::Mat, 2>> tvecs;
     std::vector<std::array<float, 2>> reprojerrs;
-    solve_pnp_cv(buff_detections, rvecs, tvecs, reprojerrs);
+    try {
+        solve_pnp_cv(buff_detections, rvecs, tvecs, reprojerrs);
+    } catch (const cv::Exception&) {
+        has_previous_solution_ = false;
+        return {};
+    }
+
+    // IPPE 正常返回 2 个镜像解；退化到 0/1 个时数组里是空 Mat，
+    // 直接 cv2eigen 会抛异常，按本次 PnP 失败处理（上层会标记 pnp_ok=false）。
+    if (rvecs.empty() || tvecs.empty() ||
+        rvecs[0][0].empty() || rvecs[0][1].empty() ||
+        tvecs[0][0].empty() || tvecs[0][1].empty()) {
+        has_previous_solution_ = false;
+        return {};
+    }
 
     std::vector<std::array<Eigen::Quaternionf, 2>> rotations;
     std::vector<std::array<Eigen::Vector3f, 2>> translations;

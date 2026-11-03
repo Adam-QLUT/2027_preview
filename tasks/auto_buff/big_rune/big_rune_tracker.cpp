@@ -56,6 +56,7 @@ BigRuneTracker::BigRuneTracker(const big_rune::MotionFilterParams & cfg)
 void BigRuneTracker::update(const PowerRune & pr, std::chrono::steady_clock::time_point capture_time)
 {
   const big_rune::Time capture_ns = to_ns(capture_time);
+  last_frame_time_ = capture_ns;
 
   // ---- 构造主候选 ----
   // R 心（符中心）world：solver 存于 blade_xyz_in_world（历史命名，语义为 R 心）
@@ -103,8 +104,9 @@ void BigRuneTracker::update(const PowerRune & pr, std::chrono::steady_clock::tim
   unsolvable_ = false;
 }
 
-void BigRuneTracker::update_lost()
+void BigRuneTracker::update_lost(std::chrono::steady_clock::time_point capture_time)
 {
+  last_frame_time_ = to_ns(capture_time);
   lost_cn_++;
   if (lost_cn_ > 15) {
     // 与旧 BigTarget 相同的丢帧重置策略：彻底重建，从建模阶段重新开始
@@ -133,11 +135,16 @@ double BigRuneTracker::predict_phase(double dt) const
   }
 
   const auto & m = filter_->get_motion();
-  // t 相对建模参考时刻（秒）。dt 从"拍照时刻"起算，天然包含拍照->当前->飞行全链路延迟
+  // t 相对建模参考时刻（秒）。dt 从"当前帧拍照时刻"起算，天然包含拍照->当前->飞行全链路延迟。
+  // 丢帧期间 filter 内 tgt.capture_timestamp 停在最后一次被跟踪的帧，
+  // 基准必须换成 last_frame_time_（丢帧帧由 update_lost 刷新为当前帧），
+  // 否则"最后一次检测 -> 当前帧"这段相位不会进入模型外推。
   const auto & tgt = filter_->get_target();
+  const big_rune::Time base =
+    last_frame_time_ != 0 ? last_frame_time_ : tgt.capture_timestamp;
   const double t =
     static_cast<double>(
-      tgt.capture_timestamp + static_cast<big_rune::Time>(dt * 1e9) - m.reference_timestamp) *
+      base + static_cast<big_rune::Time>(dt * 1e9) - m.reference_timestamp) *
     1e-9;
   const double omega_t = m.speed_angular_frequency * t;
   return m.phase_cos_coefficient * std::cos(omega_t) + m.phase_sin_coefficient * std::sin(omega_t) +
@@ -178,7 +185,10 @@ double BigRuneTracker::speed_now() const
   const auto & m = filter_->get_motion();
   if (!model_valid_ || !filter_->has_tracked_target()) return 0.0;
   const auto & tgt = filter_->get_target();
-  const double t = static_cast<double>(tgt.capture_timestamp - m.reference_timestamp) * 1e-9;
+  // 与 predict_phase 同理：丢帧时基准换 last_frame_time_，输出的是当前时刻角速度
+  const big_rune::Time base =
+    last_frame_time_ != 0 ? last_frame_time_ : tgt.capture_timestamp;
+  const double t = static_cast<double>(base - m.reference_timestamp) * 1e-9;
   const double omega_t = m.speed_angular_frequency * t;
   return m.speed_amplitude * std::cos(omega_t + m.speed_phase_shift) + m.phase_linear_velocity;
 }
@@ -193,6 +203,7 @@ void BigRuneTracker::reset()
   has_candidate_ = false;
   unsolvable_ = true;
   raw_phase_a_ = raw_phase_b_ = 0.0;
+  last_frame_time_ = 0;  // 回退 predict 基准到 tgt.capture_timestamp
 }
 
 }  // namespace auto_buff
