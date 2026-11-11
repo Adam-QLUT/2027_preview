@@ -15,6 +15,11 @@ class CameraBase
 public:
   virtual ~CameraBase() = default;
   virtual void read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp) = 0;
+  virtual bool try_read(cv::Mat &, std::chrono::steady_clock::time_point &)
+  {
+    return false;
+  }
+
 };
 
 class Camera
