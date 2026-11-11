@@ -2,26 +2,42 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <opencv2/opencv.hpp>
 
 #include "tools/logger.hpp"
 #include "tools/math_tools.hpp"
+#include "trace.hpp"
 
 namespace omniperception
 {
-Decider::Decider(const std::string & config_path) : detector_(config_path), count_(0)
+Decider::Decider(const std::string & config_path) : count_(0)
 {
   auto yaml = YAML::LoadFile(config_path);
   img_width_ = yaml["image_width"].as<double>();
   img_height_ = yaml["image_height"].as<double>();
   fov_h_ = yaml["fov_h"].as<double>();
   fov_v_ = yaml["fov_v"].as<double>();
-  new_fov_h_ = yaml["new_fov_h"].as<double>();
-  new_fov_v_ = yaml["new_fov_v"].as<double>();
+  new_fov_h_ = yaml["omni_horizontal_fov_deg"]
+                 ? yaml["omni_horizontal_fov_deg"].as<double>()
+                 : yaml["new_fov_h"].as<double>();
+  new_fov_v_ = yaml["omni_vertical_fov_deg"]
+                 ? yaml["omni_vertical_fov_deg"].as<double>()
+                 : yaml["new_fov_v"].as<double>();
+  left_yaw_offset_deg_ = yaml["omni_left_yaw_deg"] ? yaml["omni_left_yaw_deg"].as<double>() : 120.0;
+  right_yaw_offset_deg_ = yaml["omni_right_yaw_deg"] ? yaml["omni_right_yaw_deg"].as<double>() : -120.0;
+  max_detection_age_ms_ = yaml["omni_max_detection_age_ms"]
+                           ? yaml["omni_max_detection_age_ms"].as<int>()
+                           : 120;
   enemy_color_ =
     (yaml["enemy_color"].as<std::string>() == "red") ? auto_aim::Color::red : auto_aim::Color::blue;
   mode_ = yaml["mode"].as<double>();
+  trace::event(1,
+    "stage=decider_config path={} enemy_color={} mode={} max_age_ms={} left_yaw_deg={} "
+    "right_yaw_deg={} horizontal_fov_deg={} vertical_fov_deg={}",
+    config_path, static_cast<int>(enemy_color_), mode_, max_detection_age_ms_,
+    left_yaw_offset_deg_, right_yaw_offset_deg_, new_fov_h_, new_fov_v_);
 }
 
 io::Command Decider::decide(
@@ -64,7 +80,6 @@ io::Command Decider::decide(
   }
 
   count_ = (count_ + 1) % 3;
-  // 如果没有找到目标，返回默认命令
   return io::Command{false, false, 0, 0};
 }
 
@@ -111,13 +126,13 @@ Eigen::Vector2d Decider::delta_angle(
 {
   Eigen::Vector2d delta_angle;
   if (camera == "left") {
-    delta_angle[0] = 62 + (new_fov_h_ / 2) - armors.front().center_norm.x * new_fov_h_;
+    delta_angle[0] = left_yaw_offset_deg_ + (new_fov_h_ / 2) - armors.front().center_norm.x * new_fov_h_;
     delta_angle[1] = armors.front().center_norm.y * new_fov_v_ - new_fov_v_ / 2;
     return delta_angle;
   }
 
   else if (camera == "right") {
-    delta_angle[0] = -62 + (new_fov_h_ / 2) - armors.front().center_norm.x * new_fov_h_;
+    delta_angle[0] = right_yaw_offset_deg_ + (new_fov_h_ / 2) - armors.front().center_norm.x * new_fov_h_;
     delta_angle[1] = armors.front().center_norm.y * new_fov_v_ - new_fov_v_ / 2;
     return delta_angle;
   }
@@ -132,16 +147,20 @@ Eigen::Vector2d Decider::delta_angle(
 bool Decider::armor_filter(std::list<auto_aim::Armor> & armors)
 {
   if (armors.empty()) return true;
+  const auto before = armors.size();
   // 过滤非敌方装甲板
   armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
+  const auto after_color = armors.size();
 
   // 25赛季没有5号装甲板
   armors.remove_if([&](const auto_aim::Armor & a) { return a.name == auto_aim::ArmorName::five; });
+  const auto after_five = armors.size();
   // 不打工程
   // armors.remove_if([&](const auto_aim::Armor & a) { return a.name == auto_aim::ArmorName::two; });
   // 不打前哨站
   armors.remove_if(
     [&](const auto_aim::Armor & a) { return a.name == auto_aim::ArmorName::outpost; });
+  const auto after_outpost = armors.size();
 
   // 过滤掉刚复活无敌的装甲板
   armors.remove_if([&](const auto_aim::Armor & a) {
@@ -149,6 +168,10 @@ bool Decider::armor_filter(std::list<auto_aim::Armor> & armors)
            invincible_armor_.end();
   });
 
+  trace::event(2,
+    "stage=armor_filter n_in={} n_out={} reject_color={} reject_five={} reject_outpost={} "
+    "reject_invincible={}", before, armors.size(), before - after_color,
+    after_color - after_five, after_five - after_outpost, after_outpost - armors.size());
   return armors.empty();
 }
 
@@ -169,21 +192,59 @@ void Decider::sort(std::vector<DetectionResult> & detection_queue)
 {
   if (detection_queue.empty()) return;
 
+  const auto now = std::chrono::steady_clock::now();
+
   // 对每个 DetectionResult 调用 armor_filter 和 set_priority
   for (auto & dr : detection_queue) {
+    const auto before = dr.armors.size();
+    const int previous_id = dr.armors.empty() ? -1 : static_cast<int>(dr.armors.front().name);
+    const auto decision_age_ms = std::chrono::duration<double, std::milli>(now - dr.timestamp).count();
+    trace::event(2, "stage=sort_in camera={} frame_us={} checked_age_ms={:.2f} n={} id={}",
+                 dr.camera, trace::time_us(dr.timestamp), decision_age_ms, before, previous_id);
+    if (
+      dr.timestamp == std::chrono::steady_clock::time_point{} ||
+      dr.timestamp > now ||
+      now - dr.timestamp > std::chrono::milliseconds(max_detection_age_ms_)) {
+      trace::event(2,
+        "stage=sort_drop camera={} frame_us={} checked_age_ms={:.2f} n={} reason=stale max_age_ms={}",
+        dr.camera, trace::time_us(dr.timestamp), decision_age_ms, before,
+        max_detection_age_ms_);
+      dr.armors.clear();
+      continue;
+    }
     armor_filter(dr.armors);
     set_priority(dr.armors);
 
     // 对每个 DetectionResult 中的 armors 进行排序
     dr.armors.sort(
       [](const auto_aim::Armor & a, const auto_aim::Armor & b) { return a.priority < b.priority; });
+    if (!dr.armors.empty()) {
+      const auto angle = delta_angle(dr.armors, dr.camera);
+      dr.delta_yaw = angle[0] * CV_PI / 180.0;
+      dr.delta_pitch = angle[1] * CV_PI / 180.0;
+    }
+    trace::event(2,
+      "stage=sort_out camera={} frame_us={} n_in={} n_out={} previous_id={} id={} "
+      "yaw_rad={:.4f} pitch_rad={:.4f}",
+      dr.camera, trace::time_us(dr.timestamp), before, dr.armors.size(), previous_id,
+      dr.armors.empty() ? -1 : static_cast<int>(dr.armors.front().name), dr.delta_yaw, dr.delta_pitch);
   }
+
+  detection_queue.erase(
+    std::remove_if(
+      detection_queue.begin(), detection_queue.end(),
+      [](const DetectionResult & result) { return result.armors.empty(); }),
+    detection_queue.end());
+  if (detection_queue.empty()) return;
 
   // 根据优先级对 DetectionResult 进行排序
   std::sort(
     detection_queue.begin(), detection_queue.end(),
     [](const DetectionResult & a, const DetectionResult & b) {
-      return a.armors.front().priority < b.armors.front().priority;
+      if (a.armors.front().priority != b.armors.front().priority) {
+        return a.armors.front().priority < b.armors.front().priority;
+      }
+      return a.timestamp > b.timestamp;
     });
 }
 

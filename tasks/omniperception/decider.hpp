@@ -4,6 +4,7 @@
 #include <Eigen/Dense>  // 必须在opencv2/core/eigen.hpp上面
 #include <iostream>
 #include <list>
+#include <vector>
 #include <unordered_map>
 
 #include "detection.hpp"
@@ -52,14 +53,14 @@ private:
   int img_height_;
   double fov_h_, new_fov_h_;
   double fov_v_, new_fov_v_;
+  double left_yaw_offset_deg_, right_yaw_offset_deg_;
+  int max_detection_age_ms_;
   int mode_;
   int count_;
 
   auto_aim::Color enemy_color_;
-  auto_aim::YOLO detector_;
-  std::vector<auto_aim::ArmorName> invincible_armor_;  //无敌状态机器人编号,英雄为1，哨兵为6
+  std::vector<auto_aim::ArmorName> invincible_armor_;
 
-  // 定义ArmorName到ArmorPriority的映射类型
   using PriorityMap = std::unordered_map<auto_aim::ArmorName, auto_aim::ArmorPriority>;
 
   const PriorityMap mode1 = {
