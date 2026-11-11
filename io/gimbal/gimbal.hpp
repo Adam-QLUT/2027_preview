@@ -4,6 +4,8 @@
 #include <Eigen/Geometry>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -11,47 +13,54 @@
 
 #include "serial/serial.h"
 #include "tools/thread_safe_queue.hpp"
-#include "tools/math_tools.hpp"
 
 namespace io
 {
 struct __attribute__((packed)) GimbalToVision
 {
   uint8_t head[2] = {'S', 'P'};
-  uint8_t mode;  // 0: 空闲, 1: 自瞄, 2: 小符, 3: 大符
-  float q[4];    // wxyz顺序
+  uint8_t mode;  // 0: idle, 1: auto aim, 2: small buff, 3: big buff
+  float q[4];    // Small-yaw/main-camera attitude, wxyz.
+  float p[4];    // Big-yaw/chassis attitude, wxyz.
   float yaw;
   float yaw_vel;
   float pitch;
   float pitch_vel;
   float bullet_speed;
-  uint16_t bullet_count;  // 子弹累计发送次数
+  uint16_t bullet_count;
   uint16_t crc16;
 };
 
-static_assert(sizeof(GimbalToVision) <= 64);
+static_assert(sizeof(GimbalToVision) == 59);
+static_assert(offsetof(GimbalToVision, q) == 3);
+static_assert(offsetof(GimbalToVision, p) == 19);
+static_assert(offsetof(GimbalToVision, crc16) == 57);
 
 struct __attribute__((packed)) VisionToGimbal
 {
   uint8_t head[2] = {'S', 'P'};
-  uint8_t mode;  // 0: 不控制, 1: 控制云台但不开火，2: 控制云台且开火
+  uint8_t mode;  // 0: no control, 1: aim, 2: aim and fire
   float yaw;
   float yaw_vel;
   float yaw_acc;
   float pitch;
   float pitch_vel;
   float pitch_acc;
+  float center_yaw; // World-frame handoff target; the controller closes the small-yaw loop.
   uint16_t crc16;
 };
 
-static_assert(sizeof(VisionToGimbal) <= 64);
+static_assert(sizeof(VisionToGimbal) == 33);
+static_assert(offsetof(VisionToGimbal, center_yaw) == 27);
+static_assert(offsetof(VisionToGimbal, yaw) == 3);
+static_assert(offsetof(VisionToGimbal, crc16) == 31);
 
 enum class GimbalMode
 {
-  IDLE,        // 空闲
-  AUTO_AIM,    // 自瞄
-  SMALL_BUFF,  // 小符
-  BIG_BUFF     // 大符
+  IDLE,
+  AUTO_AIM,
+  SMALL_BUFF,
+  BIG_BUFF
 };
 
 struct GimbalState
@@ -68,40 +77,61 @@ class Gimbal
 {
 public:
   Gimbal(const std::string & config_path);
-
   ~Gimbal();
 
   GimbalMode mode() const;
   GimbalState state() const;
   std::string str(GimbalMode mode) const;
-  Eigen::Quaterniond q(std::chrono::steady_clock::time_point t);
-
-  // 当前 IMU 四元数队列的积压长度（线程安全），用于调试通信/对齐延迟
+  Eigen::Quaterniond q(std::chrono::steady_clock::time_point timestamp);
+  // Returns a zero quaternion when no sufficiently recent sample supports timestamp.
+  Eigen::Quaterniond p(std::chrono::steady_clock::time_point timestamp);
+  bool p_ready() const;
   size_t queue_size() const;
 
   void send(
     bool control, bool fire, float yaw, float yaw_vel, float yaw_acc, float pitch, float pitch_vel,
     float pitch_acc);
-
-  void send(io::VisionToGimbal VisionToGimbal);
+  void send(io::VisionToGimbal vision_to_gimbal);
 
 private:
+  using AttitudeSample =
+    std::tuple<Eigen::Quaterniond, std::chrono::steady_clock::time_point>;
+
   serial::Serial serial_;
-  std::mutex serial_mutex_; // <--- 【新增】请务必加上这一行！用于保护串口读写安全
+  std::mutex serial_mutex_;
   std::thread thread_;
   std::atomic<bool> quit_ = false;
+  std::atomic<size_t> rx_bytes_{0};
+  std::atomic<size_t> rx_crc_errors_{0};
+  std::atomic<size_t> rx_invalid_q_{0};
+  std::atomic<bool> chassis_imu_received_{false};
+  std::atomic<int64_t> last_chassis_imu_ns_{0};
+  std::chrono::milliseconds imu_freshness_timeout_{50};
   mutable std::mutex mutex_;
 
-  GimbalToVision rx_data_;
-  VisionToGimbal tx_data_;
+  GimbalToVision rx_data_{};
+  VisionToGimbal tx_data_{};
 
   GimbalMode mode_ = GimbalMode::IDLE;
-  GimbalState state_;
-  tools::ThreadSafeQueue<std::tuple<Eigen::Quaterniond, std::chrono::steady_clock::time_point>>
-    queue_{1000};
+  GimbalState state_{};
+  // Keep recent IMU history even when auxiliary detection pauses consumption.
+  tools::ThreadSafeQueue<AttitudeSample, true> gimbal_queue_{1000};
+  tools::ThreadSafeQueue<AttitudeSample, true> chassis_queue_{1000};
+  AttitudeSample gimbal_ahead_{
+    Eigen::Quaterniond::Identity(), std::chrono::steady_clock::time_point{}};
+  AttitudeSample gimbal_behind_{
+    Eigen::Quaterniond::Identity(), std::chrono::steady_clock::time_point{}};
+  AttitudeSample chassis_ahead_{
+    Eigen::Quaterniond::Identity(), std::chrono::steady_clock::time_point{}};
+  AttitudeSample chassis_behind_{
+    Eigen::Quaterniond::Identity(), std::chrono::steady_clock::time_point{}};
 
-  bool read(uint8_t * buffer, size_t size);
-  void read_thread();
+  Eigen::Quaterniond attitude_at(
+    tools::ThreadSafeQueue<AttitudeSample, true> & queue, AttitudeSample & ahead,
+    AttitudeSample & behind,
+    std::chrono::steady_clock::time_point timestamp, bool require_fresh = false);
+  size_t read(uint8_t * buffer, size_t capacity);
+  void read_thread(size_t wire_frame_size);
   void reconnect();
 };
 
