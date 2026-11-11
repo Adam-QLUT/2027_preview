@@ -3,57 +3,48 @@
 
 #include <atomic>
 #include <chrono>
-#include <opencv2/opencv.hpp>
+#include <memory>
 #include <string>
 #include <thread>
 
-#include "MvCameraControl.h"
 #include "io/camera.hpp"
-#include "tools/thread_safe_queue.hpp"
 
 namespace io
 {
 class HikRobot : public CameraBase
 {
 public:
-  HikRobot(double exposure_ms, double gain, const std::string & vid_pid);
+  enum class State { Starting, Capturing, Recovering, Stopped, Quarantined };
+  struct Status
+  {
+    State state;
+    int last_worker_pid;
+    int last_reset_pid;
+    unsigned int last_timeout_operation;
+  };
+  HikRobot(
+    double exposure_ms, double gain, const std::string & vid_pid,
+    const std::string & serial_number = "", float frame_rate = 150.0f);
   ~HikRobot() override;
-  void read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp) override;
 
-  /// @brief 运行时更新曝光和增益参数
+  // Returns an empty image after 100 ms without data; callers must check empty().
+  void read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp) override;
+  bool try_read(cv::Mat & img, std::chrono::steady_clock::time_point & timestamp) override;
   void update_params(double exposure_ms, double gain);
+  void request_stop() noexcept;
+  // Request all cameras before joining consumers: they share one shutdown interval.
+  static void request_stop_all();
+  Status status() const noexcept;
 
 private:
-  struct CameraData
-  {
-    cv::Mat img;
-    std::chrono::steady_clock::time_point timestamp;
-  };
-
-  double exposure_us_;
-  double gain_;
-
+  struct Process;
+  std::unique_ptr<Process> process_;
   std::thread daemon_thread_;
-  std::atomic<bool> daemon_quit_;
+  std::atomic<bool> daemon_quit_{false};
+  std::atomic<bool> retired_{false};
 
-  void * handle_;
-  std::thread capture_thread_;
-  std::atomic<bool> capturing_;
-  std::atomic<bool> capture_quit_;
-  tools::ThreadSafeQueue<CameraData> queue_;
-
-  int vid_, pid_;
-
-  void capture_start();
-  void capture_stop();
-
-  void set_float_value(const std::string & name, double value);
-  void set_enum_value(const std::string & name, unsigned int value);
-
-  void set_vid_pid(const std::string & vid_pid);
-  void reset_usb() const;
+  void supervise() noexcept;
 };
-
 }  // namespace io
 
 #endif  // IO__HIKROBOT_HPP
