@@ -6,10 +6,11 @@
 #include <iostream>
 #include <mutex>
 #include <queue>
+#include <utility>
 
 namespace tools
 {
-template <typename T, bool PopWhenFull = true>//这里一定为true，保证队列满时丢的是旧数据
+template <typename T, bool PopWhenFull = true>
 class ThreadSafeQueue
 {
 public:
@@ -34,6 +35,32 @@ public:
 
     queue_.push(value);
     not_empty_condition_.notify_all();
+  }
+
+  void push(T && value)
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+
+    if (queue_.size() >= max_size_) {
+      if (PopWhenFull) {
+        queue_.pop();
+      } else {
+        full_handler_();
+        return;
+      }
+    }
+
+    queue_.push(std::move(value));
+    not_empty_condition_.notify_all();
+  }
+
+  bool try_pop(T & value)
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (queue_.empty()) return false;
+    value = std::move(queue_.front());
+    queue_.pop();
+    return true;
   }
 
   void pop(T & value)
@@ -89,7 +116,7 @@ public:
     return queue_.empty();
   }
 
-  // 当前积压长度，供调试观测使用
+  // A diagnostic snapshot; another thread may change the size immediately.
   size_t size() const
   {
     std::unique_lock<std::mutex> lock(mutex_);
