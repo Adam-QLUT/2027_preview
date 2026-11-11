@@ -6,15 +6,19 @@
 #include <spdlog/spdlog.h>
 
 #include <chrono>
+#include <mutex>
 #include <string>
+#include <unistd.h>
 
 namespace tools
 {
 std::shared_ptr<spdlog::logger> logger_ = nullptr;
+std::once_flag logger_once;
 
 void set_logger()
 {
-  auto file_name = fmt::format("logs/{:%Y-%m-%d_%H-%M-%S}.log", std::chrono::system_clock::now());
+  auto file_name = fmt::format(
+    "logs/{:%Y-%m-%d_%H-%M-%S}_{}.log", std::chrono::system_clock::now(), ::getpid());
   auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(file_name, true);
   file_sink->set_level(spdlog::level::debug);
 
@@ -28,7 +32,7 @@ void set_logger()
 
 std::shared_ptr<spdlog::logger> logger()
 {
-  if (!logger_) set_logger();
+  std::call_once(logger_once, set_logger);
   return logger_;
 }
 
