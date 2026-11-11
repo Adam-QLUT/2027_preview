@@ -1,3 +1,7 @@
+# Measured controller stream: 1001 CRC-valid 64-byte SP frames in 5 seconds.
+# Bytes 57..61 are opaque extension data; outgoing protocol is unchanged.
+gimbal_rx_frame_bytes: 64
+
 enemy_color: "red"
 # enemy_color: "blue"
 
@@ -14,6 +18,37 @@ device: GPU
 min_confidence: 0.8
 use_traditional: true
 
+#####----- omnidirectional auxiliary cameras -----#####
+# Fill in the exact HikRobot serial numbers printed on each camera/MVS device list.
+# The role determines the mounting angle; never rely on SDK enumeration order.
+camera_serial_number: "DA7447466"
+omni_left_camera_serial_number: "DB0159681"
+omni_right_camera_serial_number: "DB0159666"
+omni_exposure_ms: 3
+omni_gain: 5
+omni_frame_rate: 60
+omni_left_yaw_deg: 120.0
+omni_right_yaw_deg: -120.0
+# Optional per-camera measured calibration, relative to this YAML's directory.
+# Empty keeps angle fallback. Never copy the main-camera intrinsics to auxiliary cameras.
+omni_calibration_file: ""
+# Effective FOV after crop/undistortion; calibrate these with the final lenses.
+omni_horizontal_fov_deg: 44.98
+omni_vertical_fov_deg: 34.50
+omni_max_detection_age_ms: 120
+omni_candidate_max_gap_ms: 120 # confirmation gap; independent from result age
+omni_handoff_timeout_ms: 1500
+omni_takeover_timeout_ms: 800
+omni_failed_candidate_cooldown_ms: 500
+omni_candidate_max_yaw_jump_deg: 10.0
+omni_main_match_max_yaw_error_deg: 20.0
+# While handing off, scan around the auxiliary target estimate instead of
+# holding one potentially biased point forever.
+omni_scan_amplitude_deg: 4.0
+omni_scan_period_ms: 300
+omni_scan_start_tolerance_deg: 6.0
+omni_scan_settle_ms: 100
+
 #####-----ROI-----#####
 roi: 
   x: 420
@@ -24,16 +59,16 @@ roi:
 use_roi: false
 
 # #####-----USB相机参数-----#####
-# image_width: 1280
-# image_height: 720
-# fov_h: 57.7 #87.7
-# fov_v: 56.7 
-# new_fov_h: 27 #67
-# new_fov_v: 40.9
-# usb_frame_rate: 120
-# usb_exposure: 500 #1-80000______250
-# usb_gamma: 160
-# usb_gain: 10 #0-96
+image_width: 640
+image_height: 480
+fov_h: 57.7
+fov_v: 56.7
+new_fov_h: 27
+new_fov_v: 40.9
+usb_frame_rate: 120
+usb_exposure: 500
+usb_gamma: 160
+usb_gain: 10
 
 #####-----工业相机参数-----#####
 camera_name: "hikrobot"
@@ -54,7 +89,17 @@ max_rectangular_error: 25 # 矩形度
 min_confidence: 0.8
 
 #####-----cboard参数-----#####
+# Real-vehicle link. "sp" matches the packed q[4]/p[4] protocol in gimbal.hpp;
+# use "cboard" only for the 0xA5 CAN-to-serial bridge.
+control_transport: "sp"
+# Bench-test interlock. Keep true until wheels are lifted and yaw directions,
+# zero crossing, limits and emergency stop have all been checked.
+real_vehicle_test_no_fire: true
+# A p/q packet older than this is invalid and cannot drive an omni handoff.
+imu_freshness_timeout_ms: 50
 quaternion_canid: 0x01
+# p[4]: big-yaw/chassis quaternion in wxyz order. If omitted, p falls back to q.
+chassis_quaternion_canid: 0x02
 bullet_speed_canid: 0x110
 send_canid: 0xff
 serial_port: "/dev/ttyUSB0"
@@ -114,44 +159,9 @@ distort_coeffs: [-0.053935005818347745, 0.099523851213960096, -0.002346880195650
 R_camera2gimbal: [0, 0, 1, -1, 0, 0, 0, -1, 0]
 t_camera2gimbal: [0.11994017, 0.0, 0.16147]
 
-# ===== HW auto_buff 配置 =====
-hw_buff:
-  engine_path: "tasks/auto_buff/hw_buff_algo/config/buff.engine" #没用
-  config_dir: "tasks/auto_buff/hw_buff_algo/config" #没用
-  buff_color: 1
-  run_mode: 1
-  confidence_threshold: 0.5
-  nms_threshold: 0.45
-  big_phase_motion_estimate:
-    max_time_interval: 3.0
-    prepare_time: 180
-    window_settling_time: 8.0
-    min_data_size_to_build_motion_model: 100
-    acceptable_time_interval_to_confirm_rotation: 0.15
-    target_switch_threshold: 0.77
-    expect_phase_linear_velocity: 1.1775
-    highest_time_weight: 1.0
-    lowwest_time_weight: 0.2
-    filter_window_size: 7
-    speed_angular_frequency_init: 1.942
-    phase_cos_coefficient_init: -0.3322528
-    phase_sin_coefficient_init: 0.3322528
-    phase_linear_velocity_init: 1.1775
-    phase_constant_offset_radians_init: 0
-    omega_lower_bound: 1.884
-    omega_upper_bound: 2.000
-    outer_max_iterations: 20
-    inner_max_iterations: 40
-    robust_scale_factor: 2.5
-    inner_tolerance: 1.0e-2
-    lambda_init: 1.0e-2
-    lambda_min: 1.0e-6
-    lambda_max: 1000000.0
-    outer_tolerance: 1.0e-5
-    max_omega_step: 0.05
-    diff_eps_min: 1.0e-4
-    diff_eps_rel_init: 1.0e-3
+#####-----buff参数-----#####
+model: "assets/yolo11_buff_int8.xml"
 
-# ===== SZU RuneModel 配置 =====
-rune_model:
-  path: "assets/rune_model/Rune-v8n-fp16-20260624-D14367-B16.xml"
+#####-----buff_aimer参数-----#####
+fire_gap_time: 0.600 # s
+predict_time: 0.154 # s (原0.125提前量不够，增大)
