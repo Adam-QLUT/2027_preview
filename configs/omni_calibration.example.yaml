@@ -1,0 +1,43 @@
+# TEMPLATE ONLY: no measured auxiliary calibration is available yet.
+# Save as omni_calibration.yaml, fill measured values and enable each role separately.
+# Set sentry.yaml: omni_calibration_file: "omni_calibration.yaml"
+schema_version: 1
+
+# All translations and dimensions below are METRES. Rotations are row-major.
+# p-local frame must use the same axes as the incoming chassis quaternion.
+# Optical camera axes: x right, y down, z forward.
+# p_frame_point = R_camera2chassis * optical_point + t_camera2chassis
+# R includes mounting yaw, pitch, roll and optical-to-chassis axis conversion.
+# Do NOT add omni_left/right_yaw_deg a second time in calibrated mode.
+
+# Small-yaw rotation center, expressed in p's local frame. Measure it.
+handoff_origin_in_chassis: []
+# [small armor lightbar spacing, big armor lightbar spacing, lightbar length]
+# Defaults in the existing main Solver are [0.135, 0.230, 0.056]; verify actual keypoints.
+armor_dimensions_m: []
+
+left:
+  enabled: false
+  serial_number: "" # must match omni_left_camera_serial_number exactly
+  image_width: 0    # actual full-frame width used by YOLO, not the model input width
+  image_height: 0
+  camera_matrix: [] # [fx,0,cx, 0,fy,cy, 0,0,1]
+  distort_coeffs: [] # OpenCV pinhole: 4/5/8/12/14 coefficients; not fisheye
+  R_camera2chassis: [] # nine measured rotation entries
+  t_camera2chassis: [] # three measured translation entries, metres
+  max_reprojection_error_px: 3.0
+  min_distance_m: 0.1
+  max_distance_m: 30.0
+
+right:
+  enabled: false
+  serial_number: "" # must match omni_right_camera_serial_number exactly
+  image_width: 0
+  image_height: 0
+  camera_matrix: []
+  distort_coeffs: []
+  R_camera2chassis: []
+  t_camera2chassis: []
+  max_reprojection_error_px: 3.0
+  min_distance_m: 0.1
+  max_distance_m: 30.0
