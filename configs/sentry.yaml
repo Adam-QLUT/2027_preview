@@ -14,6 +14,21 @@ device: GPU
 min_confidence: 0.8
 use_traditional: true
 
+#####----- omnidirectional auxiliary cameras -----#####
+# Fill in the exact HikRobot serial numbers printed on each camera/MVS device list.
+# The role determines the mounting angle; never rely on SDK enumeration order.
+camera_serial_number: "DA7447466"
+omni_left_camera_serial_number: "DB0159681"
+omni_right_camera_serial_number: "DB0159666"
+omni_exposure_ms: 3
+omni_gain: 5
+omni_frame_rate: 60
+omni_left_yaw_deg: 120.0
+omni_right_yaw_deg: -120.0
+omni_max_detection_age_ms: 120
+omni_fixed_turn_deg: 120.0
+omni_fixed_turn_hold_ms: 2000
+
 #####-----ROI-----#####
 roi: 
   x: 420
